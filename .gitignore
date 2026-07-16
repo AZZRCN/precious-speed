@@ -1,0 +1,15 @@
+# Compiled binaries / 编译产物
+*.exe
+*.o
+*.obj
+
+# Test artifacts / 测试产物
+*.txt
+!README.md
+
+# IDE / 编辑器
+.vscode/
+.idea/
+
+# Build directories / 构建目录
+benchmark_*/
