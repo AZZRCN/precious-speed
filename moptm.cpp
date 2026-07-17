@@ -1029,19 +1029,17 @@ namespace hint
     };
 
     template <typename T>
-    T add_half(T a, T b, T base, bool &cf)
+    T add_half(T a, T b, T base, T &cf)
     {
         a += b;
         cf = a >= base;
-        const T mask = T(0) - T(cf);
-        return a - (base & mask);
+        return cf ? a - base : a;
     }
     template <typename T>
-    T sub_half(T a, T b, T base, bool &bf)
+    T sub_half(T a, T b, T base, T &bf)
     {
         bf = a < b;
-        const T mask = T(0) - T(bf);
-        return a - b + (base & mask);
+        return bf ? a - b + base : a - b;
     }
 
     template <typename T>
@@ -1170,36 +1168,7 @@ namespace hint
         }
         void fromString(const std::string &str)
         {
-            if (str.empty())
-            {
-                return;
-            }
-            auto p_begin = str.data(), p_end = p_begin + str.size();
-            if (str[0] == '-')
-            {
-                sign = true;
-                p_begin++;
-            }
-            size_t len = p_end - p_begin;
-            data.resize((len + BASE_DIGIT - 1) / BASE_DIGIT);
-            size_t i = 0;
-            while (p_end > p_begin + 3)
-            {
-                p_end -= BASE_DIGIT;
-                data[i] = str4toi(p_end);
-                i++;
-            }
-            if (p_end > p_begin)
-            {
-                data[i] = 0;
-                while (p_end > p_begin)
-                {
-                    data[i] *= 10;
-                    data[i] += p_begin[0] - '0';
-                    p_begin++;
-                }
-            }
-            removeLeadingZero();
+            fromCharRange(str.data(), str.data() + str.size());
         }
 	void from_c_str(const char * str) {
             if (str[0] == '\0')
@@ -1402,7 +1371,8 @@ namespace hint
         }
         friend std::istream &operator>>(std::istream &is, Integer &num)
         {
-            std::string tmp;
+            static std::string tmp;
+            tmp.clear();
             is >> tmp;
             num.fromString(tmp);
             return is;
@@ -1437,7 +1407,14 @@ namespace hint
                 std::swap(in1, in2);
             }
             size_t i = 0;
-            bool carry = 0;
+            Limb carry = 0;
+            for (; i + 3 < in2.size; i += 4)
+            {
+                out[i]   = add_half<Limb>(in1[i],   in2[i]   + carry, BASE, carry);
+                out[i+1] = add_half<Limb>(in1[i+1], in2[i+1] + carry, BASE, carry);
+                out[i+2] = add_half<Limb>(in1[i+2], in2[i+2] + carry, BASE, carry);
+                out[i+3] = add_half<Limb>(in1[i+3], in2[i+3] + carry, BASE, carry);
+            }
             for (; i < in2.size; i++)
             {
                 out[i] = add_half<Limb>(in1[i], in2[i] + carry, BASE, carry);
@@ -1452,7 +1429,14 @@ namespace hint
         {
             assert(in1.size >= in2.size);
             size_t i = 0;
-            bool borrow = 0;
+            Limb borrow = 0;
+            for (; i + 3 < in2.size; i += 4)
+            {
+                out[i]   = sub_half<Limb>(in1[i],   in2[i]   + borrow, BASE, borrow);
+                out[i+1] = sub_half<Limb>(in1[i+1], in2[i+1] + borrow, BASE, borrow);
+                out[i+2] = sub_half<Limb>(in1[i+2], in2[i+2] + borrow, BASE, borrow);
+                out[i+3] = sub_half<Limb>(in1[i+3], in2[i+3] + borrow, BASE, borrow);
+            }
             for (; i < in2.size; i++)
             {
                 out[i] = sub_half<Limb>(in1[i], in2[i] + borrow, BASE, borrow);
@@ -1466,7 +1450,7 @@ namespace hint
         static bool absAdd1(View in1, Limb in2, Span out)
         {
             assert(in1.size > 0);
-            bool carry = 0;
+            Limb carry = 0;
             out[0] = add_half<Limb>(in1[0], in2, BASE, carry);
             for (size_t i = 1; i < in1.size; i++)
             {
@@ -1477,7 +1461,7 @@ namespace hint
         static bool absSub1(View in1, Limb in2, Span out)
         {
             assert(in1.size > 0);
-            bool borrow = 0;
+            Limb borrow = 0;
             out[0] = sub_half<Limb>(in1[0], in2, BASE, borrow);
             for (size_t i = 1; i < in1.size; i++)
             {
@@ -1622,13 +1606,26 @@ namespace hint
             std::fill(v2 + len2, v2 + float_len, 0.0);
             transform::fft::real_conv(v1, v2, float_len);
             uint64_t carry = 0;
-            for (size_t i = 0; i < conv_len; i++)
+            size_t i = 0;
+            for (; i + 3 < conv_len; i += 4)
+            {
+                uint64_t s0 = carry + uint64_t(v1[i]   + 0.5);
+                uint64_t s1 = s0    / BASE + uint64_t(v1[i+1] + 0.5);
+                uint64_t s2 = s1    / BASE + uint64_t(v1[i+2] + 0.5);
+                uint64_t s3 = s2    / BASE + uint64_t(v1[i+3] + 0.5);
+                out[i]   = Limb(s0 % BASE);
+                out[i+1] = Limb(s1 % BASE);
+                out[i+2] = Limb(s2 % BASE);
+                out[i+3] = Limb(s3 % BASE);
+                carry = s3 / BASE;
+            }
+            for (; i < conv_len; i++)
             {
                 carry += uint64_t(v1[i] + 0.5);
-                out[i] = carry % BASE;
+                out[i] = Limb(carry % BASE);
                 carry /= BASE;
             }
-            out[conv_len] = carry;
+            out[conv_len] = Limb(carry);
             
             if (out.size > conv_len + 1)
             {
@@ -1654,13 +1651,26 @@ namespace hint
             std::fill(v + len, v + float_len, 0.0);
             transform::fft::real_conv(v, v, float_len);
             uint64_t carry = 0;
-            for (size_t i = 0; i < conv_len; i++)
+            size_t i = 0;
+            for (; i + 3 < conv_len; i += 4)
+            {
+                uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
+                uint64_t s1 = s0    / BASE + uint64_t(v[i+1] + 0.5);
+                uint64_t s2 = s1    / BASE + uint64_t(v[i+2] + 0.5);
+                uint64_t s3 = s2    / BASE + uint64_t(v[i+3] + 0.5);
+                out[i]   = Limb(s0 % BASE);
+                out[i+1] = Limb(s1 % BASE);
+                out[i+2] = Limb(s2 % BASE);
+                out[i+3] = Limb(s3 % BASE);
+                carry = s3 / BASE;
+            }
+            for (; i < conv_len; i++)
             {
                 carry += uint64_t(v[i] + 0.5);
-                out[i] = carry % BASE;
+                out[i] = Limb(carry % BASE);
                 carry /= BASE;
             }
-            out[conv_len] = carry;
+            out[conv_len] = Limb(carry);
             
             if (out.size > conv_len + 1)
             {
@@ -1741,13 +1751,26 @@ namespace hint
             transform::fft::real_dot_binrev2(v, b_dft, float_len);
             fft.template idit<true>(v, float_len);
             uint64_t carry = 0;
-            for (size_t i = 0; i < conv_len; i++)
+            size_t i = 0;
+            for (; i + 3 < conv_len; i += 4)
+            {
+                uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
+                uint64_t s1 = s0    / BASE + uint64_t(v[i+1] + 0.5);
+                uint64_t s2 = s1    / BASE + uint64_t(v[i+2] + 0.5);
+                uint64_t s3 = s2    / BASE + uint64_t(v[i+3] + 0.5);
+                out[i]   = Limb(s0 % BASE);
+                out[i+1] = Limb(s1 % BASE);
+                out[i+2] = Limb(s2 % BASE);
+                out[i+3] = Limb(s3 % BASE);
+                carry = s3 / BASE;
+            }
+            for (; i < conv_len; i++)
             {
                 carry += uint64_t(v[i] + 0.5);
-                out[i] = carry % BASE;
+                out[i] = Limb(carry % BASE);
                 carry /= BASE;
             }
-            out[conv_len] = carry;
+            out[conv_len] = Limb(carry);
             
             if (out.size > conv_len + 1)
             {
@@ -2389,23 +2412,28 @@ namespace hint
 
         friend Integer operator+(Integer lhs, const Integer &rhs)
         {
-            return lhs += rhs;
+            lhs += rhs;
+            return lhs;
         }
         friend Integer operator-(Integer lhs, const Integer &rhs)
         {
-            return lhs -= rhs;
+            lhs -= rhs;
+            return lhs;
         }
         friend Integer operator*(Integer lhs, const Integer &rhs)
         {
-            return lhs *= rhs;
+            lhs *= rhs;
+            return lhs;
         }
         friend Integer operator/(Integer lhs, const Integer &rhs)
         {
-            return lhs /= rhs;
+            lhs /= rhs;
+            return lhs;
         }
         friend Integer operator%(Integer lhs, const Integer &rhs)
         {
-            return lhs %= rhs;
+            lhs %= rhs;
+            return lhs;
         }
 
         friend Integer operator*(Integer lhs, Limb rhs)
@@ -2546,51 +2574,53 @@ namespace {
 
 #if defined(HINT_OP_ADD)
 int main() {
-	std::ios::sync_with_stdio(false);
-	std::cin.tie(nullptr);
-	int t = 1;
-	std::cin >> t;
-	hint::Integer a, b;
-	while (t--) {
-		std::cin >> a >> b;
-		writeHint(a + b);
-		*oCursor++ = '\n';
-	}
-	flushOutput();
-	return 0;
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+    int t = 1;
+    std::cin >> t;
+    hint::Integer a, b;
+    while (t--) {
+        std::cin >> a >> b;
+        a += b;
+        writeHint(a);
+        *oCursor++ = '\n';
+    }
+    flushOutput();
+    return 0;
 }
 #elif defined(HINT_OP_MUL)
 int main() {
-	std::ios::sync_with_stdio(false);
-	std::cin.tie(nullptr);
-	int t = 1;
-	std::cin >> t;
-	hint::Integer a, b;
-	while (t--) {
-		std::cin >> a >> b;
-		writeHint(a * b);
-		*oCursor++ = '\n';
-	}
-	flushOutput();
-	return 0;
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+    int t = 1;
+    std::cin >> t;
+    hint::Integer a, b;
+    while (t--) {
+        std::cin >> a >> b;
+        a *= b;
+        writeHint(a);
+        *oCursor++ = '\n';
+    }
+    flushOutput();
+    return 0;
 }
 #elif defined(HINT_OP_DIV)
 int main() {
-	std::ios::sync_with_stdio(false);
-	std::cin.tie(nullptr);
-	int t = 1;
-	std::cin >> t;
-	hint::Integer a, b, q, r;
-	while (t--) {
-		std::cin >> a >> b;
-		a.absDivRem(b, q, r);
-		writeHint(q);
-		*oCursor++ = ' ';
-		writeHint(r);
-		*oCursor++ = '\n';
-	}
-	flushOutput();
-	return 0;
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+    int t = 1;
+    std::cin >> t;
+    hint::Integer a, b, q, r;
+    while (t--) {
+        std::cin >> a >> b;
+        a.absDivRem(b, q, r);
+        writeHint(q);
+        *oCursor++ = ' ';
+        writeHint(r);
+        *oCursor++ = '\n';
+    }
+    flushOutput();
+    return 0;
 }
 #else
 #error "Must define HINT_OP_ADD, HINT_OP_MUL, or HINT_OP_DIV"
