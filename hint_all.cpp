@@ -29,9 +29,6 @@
 #include <climits>
 
 #include <chrono>
-#ifdef PROFILE_DIV
-#include <cstdio>
-#endif
 
 namespace hint
 {
@@ -916,20 +913,12 @@ namespace hint
                 }
             }
 
-            // 共享 FFT 对象: 所有函数复用同一份旋转因子表，避免首次调用时重复计算
-            template <typename Float>
-            inline FFT<Float> &getSharedFFT()
-            {
-                static FFT<Float> fft;
-                return fft;
-            }
-
             template <typename Float>
             inline void real_conv(Float *in_out1, Float *in2, size_t float_len)
             {
                 assert(is_2pow(float_len));
                 assert(float_len <= FFT_MAX_LEN * 2);
-                auto &fft = getSharedFFT<Float>();
+                static FFT<Float> fft;
                 fft.expand(float_len);
                 fft.template dif<true>(in_out1, float_len);
                 if (in_out1 != in2)
@@ -1668,7 +1657,7 @@ namespace hint
                 std::fill_n(out.ptr + conv_len + 1, out.size - conv_len - 1, Limb(0));
             }
         }
-
+        
 #ifndef FFT_SQR_THRESHOLD
 #define FFT_SQR_THRESHOLD 64
 #endif
@@ -1712,7 +1701,7 @@ namespace hint
             assert(float_len >= in.size);
             std::copy(in.begin(), in.end(), dft_buf);
             std::fill(dft_buf + in.size, dft_buf + float_len, 0.0);
-            auto &fft = transform::fft::getSharedFFT<double>();
+            static transform::fft::FFT<double> fft;
             fft.expand(float_len);
             fft.template dif<true>(dft_buf, float_len);
         }
@@ -1736,7 +1725,7 @@ namespace hint
             double *v = tv.data();
             std::copy(a.ptr, a.ptr + a_len, v);
             std::fill(v + a_len, v + float_len, 0.0);
-            auto &fft = transform::fft::getSharedFFT<double>();
+            static transform::fft::FFT<double> fft;
             fft.expand(float_len);
             fft.template dif<true>(v, float_len);
             transform::fft::real_dot_binrev2(v, b_dft, float_len);
@@ -1848,18 +1837,15 @@ namespace hint
         }
 
         
-        // B-1 优化: m_dft/m_dft_float_len 为预计算的 m 的 DFT（可选）
-        // 最外层可传入以省 1 次 DFT(m)；递归层不传（m+s 子段 DFT 未预计算）
-        static void absInvNewton(View m, Span inv,
-                                 const double *m_dft = nullptr, size_t m_dft_float_len = 0)
+        static void absInvNewton(View m, Span inv)
         {
             size_t k = m.size;
             assert(k > 0);
-            assert(inv.size >= k + 1);
-            if (k <= 64)
+            assert(inv.size >= k + 1); 
+            if (k <= 16)
             {
-                Limb b_2k[256];
-                b_2k[k * 2] = 1;
+                Limb b_2k[64];
+                b_2k[k * 2] = 1; 
                 std::fill_n(b_2k, k * 2, Limb(0));
                 absDivBasicCore(Span(b_2k, k * 2 + 1), m, inv);
                 return;
@@ -1897,20 +1883,8 @@ namespace hint
             Span prod_span(tprod.data(), prod_size), inv2_span(tinv2.data(), inv2_size);
             bool cf = absAdd(inv0, inv0, inv2_span + s); 
             assert(!cf);                                 
-            absSqr(inv0, prod_span);
-            // B-1 优化: 若有预计算的 m DFT 且 float_len 匹配，用 fftMulPre 省 1 次 DFT(m)
-            {
-                size_t conv_len = inv0_len * 2 + k - 1;
-                size_t need_float_len = int_ceil2(conv_len);
-                if (m_dft != nullptr && m_dft_float_len == need_float_len)
-                {
-                    fftMulPre(View(tprod.data(), inv0_len * 2), m_dft, k, need_float_len, prod_span);
-                }
-                else
-                {
-                    absMul(View(tprod.data(), inv0_len * 2), m, prod_span);
-                }
-            }
+            absSqr(inv0, prod_span);                     
+            absMul(View(tprod.data(), inv0_len * 2), m, prod_span);
             prod_span = prod_span + 2 * (k - s);        
             assert(prod_span[prod_span.size - 1] == 0); 
             prod_span.size--;                           
@@ -2071,57 +2045,29 @@ namespace hint
             size_t len1 = dividend.size, len2 = divisor.size;
             Limb divisor_high = divisor[len2 - 1];
             assert(divisor_high >= HALF_BASE);
-#ifdef PROFILE_DIV
-            auto _p_t0 = std::chrono::high_resolution_clock::now();
-#endif
+            
             thread_local std::vector<Limb> t_inv;
             size_t inv_size = len2 + 1;
             if (t_inv.size() < inv_size) t_inv.resize(inv_size);
             Span inv_span(t_inv.data(), inv_size);
+            absInvNewton(divisor, inv_span);
             size_t blocks = len1 / len2, len1_rem = len2 * blocks;
             auto divid_it = dividend.ptr + (len1_rem - len2);
             auto quot_it = quotient.ptr + (len1_rem - len2);
-
-            // B-1 优化: blocks>=2 时预计算 divisor_dft 并传入 absInvNewton 最外层
-            //           省 1 次 DFT(m)（float_len 匹配时生效）
-            thread_local std::vector<double> inv_dft_buf, divisor_dft_buf;
-            size_t inv_float_len = int_ceil2(len2 * 2 + 1);
-            size_t divisor_float_len = int_ceil2(len2 * 2);
-            bool has_divisor_dft = false;
+            
+            
+            
             if (blocks >= 3)
             {
-                if (divisor_dft_buf.size() < divisor_float_len)
-                    divisor_dft_buf.resize(divisor_float_len);
-                prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
-                has_divisor_dft = true;
-            }
-            if (has_divisor_dft)
-            {
-                absInvNewton(divisor, inv_span, divisor_dft_buf.data(), divisor_float_len);
-            }
-            else
-            {
-                absInvNewton(divisor, inv_span);
-            }
-#ifdef PROFILE_DIV
-            auto _p_t1 = std::chrono::high_resolution_clock::now();
-            fprintf(stderr, "  [prof] absInvNewton: %.3f ms (len2=%zu, dft_reuse=%d)\n",
-                    std::chrono::duration<double, std::milli>(_p_t1 - _p_t0).count(), len2, has_divisor_dft);
-#endif
-
-
-
-            if (blocks >= 3)
-            {
+                size_t inv_float_len = int_ceil2(len2 * 2 + 1);
+                size_t divisor_float_len = int_ceil2(len2 * 2);
+                thread_local std::vector<double> inv_dft_buf, divisor_dft_buf;
                 if (inv_dft_buf.size() < inv_float_len)
                     inv_dft_buf.resize(inv_float_len);
+                if (divisor_dft_buf.size() < divisor_float_len)
+                    divisor_dft_buf.resize(divisor_float_len);
                 prepareDFT(inv_span, inv_dft_buf.data(), inv_float_len);
-#ifdef PROFILE_DIV
-                auto _p_t2 = std::chrono::high_resolution_clock::now();
-                fprintf(stderr, "  [prof] prepareDFT: %.3f ms (inv_float_len=%zu, divisor_float_len=%zu)\n",
-                        std::chrono::duration<double, std::milli>(_p_t2 - _p_t1).count(), inv_float_len, divisor_float_len);
-                auto _p_t3 = std::chrono::high_resolution_clock::now();
-#endif
+                prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
                 absDivNewtonWithInvFast(dividend + (len1_rem - len2), divisor, quotient + (len1_rem - len2), inv_span, inv_dft_buf.data(), inv_float_len, divisor_dft_buf.data(), divisor_float_len);
                 while (divid_it > dividend.ptr)
                 {
@@ -2129,19 +2075,9 @@ namespace hint
                     quot_it -= len2;
                     absDivNewtonWithInvFast(Span(divid_it, len2 * 2), divisor, Span(quot_it, len2), inv_span, inv_dft_buf.data(), inv_float_len, divisor_dft_buf.data(), divisor_float_len);
                 }
-#ifdef PROFILE_DIV
-                auto _p_t4 = std::chrono::high_resolution_clock::now();
-                fprintf(stderr, "  [prof] Core2 loop: %.3f ms (%zu blocks, %zu fftMulPre calls)\n",
-                        std::chrono::duration<double, std::milli>(_p_t4 - _p_t3).count(), blocks, size_t(blocks * 2));
-                fprintf(stderr, "  [prof] Total Core2: %.3f ms (len1=%zu, len2=%zu)\n",
-                        std::chrono::duration<double, std::milli>(_p_t4 - _p_t0).count(), len1, len2);
-#endif
             }
             else
             {
-#ifdef PROFILE_DIV
-                auto _p_t3 = std::chrono::high_resolution_clock::now();
-#endif
                 absDivNewtonWithInv(dividend + (len1_rem - len2), divisor, quotient + (len1_rem - len2), inv_span);
                 while (divid_it > dividend.ptr)
                 {
@@ -2149,13 +2085,6 @@ namespace hint
                     quot_it -= len2;
                     absDivNewtonWithInv(Span(divid_it, len2 * 2), divisor, Span(quot_it, len2), inv_span);
                 }
-#ifdef PROFILE_DIV
-                auto _p_t4 = std::chrono::high_resolution_clock::now();
-                fprintf(stderr, "  [prof] Core1 loop (slow): %.3f ms (%zu blocks)\n",
-                        std::chrono::duration<double, std::milli>(_p_t4 - _p_t3).count(), blocks);
-                fprintf(stderr, "  [prof] Total Core2: %.3f ms (len1=%zu, len2=%zu)\n",
-                        std::chrono::duration<double, std::milli>(_p_t4 - _p_t0).count(), len1, len2);
-#endif
             }
         }
             
