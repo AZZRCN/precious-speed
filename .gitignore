@@ -13,3 +13,6 @@
 
 # Build directories / 构建目录
 benchmark_*/
+
+# Compile error logs / 编译错误日志
+build_*.err

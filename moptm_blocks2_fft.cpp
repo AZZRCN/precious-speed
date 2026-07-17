@@ -709,8 +709,9 @@ namespace hint
                         C1 omega = getOmega(BLOCK, bitrev(i, LOG_BLOCK), factor);
                         fp[i] = omega.real(), fp[i + BLOCK] = omega.imag();
                     }
-         }
-         
+                }
+
+                
                 void reset(size_t i = 0)
                 {
                     if (i == 0)
@@ -1990,61 +1991,12 @@ namespace hint
                 absSub(dividend, divisor, dividend);
                 absAdd1(qhat_span, 1, qhat_span);
             }
-             assert(qhat_span[qhat_span.size - 1] == 0);
-             qhat_span.size--;
-             std::copy(qhat_span.begin(), qhat_span.end(), quotient.begin());
-         }
-         
-         // 宽松分块除法: qhat 可能有更大误差，但通过更多修正循环补偿
-         // 用于低精度逆时降低 qhat 估计的压力
-         static void absDivNewtonWithInvLoose(Span dividend, View divisor, Span quotient, View inv_span)
-         {
-             assert(dividend.size <= divisor.size * 2);
-             if (dividend.size <= divisor.size)
-             {
-                 return;
-             }
-             size_t k = divisor.size;
-             Span divid_high = dividend + (k - 1);
-             
-             thread_local std::vector<Limb> tqhat, tprod;
-             size_t qhat_len = divid_high.size + inv_span.size;
-             size_t prod_len = qhat_len - 1;
-             if (tqhat.size() < qhat_len)
-                 tqhat.resize(qhat_len);
-             if (tprod.size() < prod_len)
-                 tprod.resize(prod_len);
-             
-             Span qhat_span(tqhat.data(), qhat_len), prod_span(tprod.data(), prod_len);
-             absMul(inv_span, divid_high, qhat_span); 
-             qhat_span = qhat_span + (k + 1);         
-             absMul(divisor, qhat_span, prod_span);   
-             prod_span.size = count_true_length(prod_span.ptr, prod_span.size);
-             
-             // 修正循环: 允许多达 5 次迭代（增加容错能力）
-             int corrections = 0;
-             while (absCompare(prod_span, dividend) > 0 && corrections < 5)
-             {
-                 absSub(prod_span, divisor, prod_span); 
-                 absSub1(qhat_span, 1, qhat_span);
-                 corrections++;      
-             }
-             absSub(dividend, prod_span, dividend); 
-             dividend.size = k;
-             // 最终检查: 同样允许多次修正
-             corrections = 0;
-             while (absCompare(dividend, divisor) >= 0 && corrections < 5)
-             {
-                 absSub(dividend, divisor, dividend);
-                 absAdd1(qhat_span, 1, qhat_span);
-                 corrections++;
-             }
-             assert(qhat_span[qhat_span.size - 1] == 0);
-             qhat_span.size--;
-             std::copy(qhat_span.begin(), qhat_span.end(), quotient.begin());
-         }
-         
-         static void absDivNewtonCore1(Span dividend, View divisor, Span quotient)
+            assert(qhat_span[qhat_span.size - 1] == 0);
+            qhat_span.size--;
+            std::copy(qhat_span.begin(), qhat_span.end(), quotient.begin());
+        }
+        
+        static void absDivNewtonCore1(Span dividend, View divisor, Span quotient)
         {
             if (dividend.size <= divisor.size || dividend.size >= divisor.size * 2)
             {
