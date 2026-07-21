@@ -6,6 +6,11 @@
 //   #define HINT_OP_MUL    // Multiplication of Big Integers
 #define HINT_OP_DIV          // Division of Big Integers (默认)
 
+// 禁用 cyclic (2NXN mod B^m-1) 路径: LC 实测 burnikel_ziegler_bound / r_nearly_zero 等用例
+// 触发 assert 和 WA (商差1), 根因是 cyclic unwrap 精度问题. 禁用后回退到线性卷积 + absInvNewton,
+// 保证正确性. 性能损失 ~7% (1M/500k 18.3ms → ~19.7ms)
+#define DISABLE_2NXN_CYCLIC
+
 #ifndef HINT_MINI_HPP
 #define HINT_MINI_HPP
 
@@ -2643,7 +2648,11 @@ namespace hint
 #define CYCLIC_MIN_K 4096
 #endif
             size_t mn = int_ceil2(k + 1);
+#ifndef DISABLE_2NXN_CYCLIC
             bool use_cyclic = (mn >= k + 1) && (mn <= k + rn) && (k >= CYCLIC_MIN_K);
+#else
+            bool use_cyclic = false;
+#endif
 
             if (use_cyclic)
             {
