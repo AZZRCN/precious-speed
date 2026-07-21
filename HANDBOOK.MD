@@ -850,14 +850,28 @@ absDivMu 非cyclic路径修正2（qhat偏小检测）**只比较 new_rp 低 len2
 - 50 a_max_b_random (a >> b) 边界用例
 - 100 case#134 同尺寸 (a=1000, b=332, 不同 seed) 用例
 
-### 性能影响
+### 性能影响 (perf_counter 精确测量, 2 warmup + 10 measure, taskset -c 0)
 
 修复引入额外 O(this_in) 的减法计算 (new_rp 高位), 但相比 FFT 的 O(n log n) 开销可忽略。
-详细 benchmark 待测。
+
+| 测试 | min (ms) | median (ms) | 说明 |
+|------|:-:|:-:|------|
+| 1M/500k | 23.37 | 24.18 | 主测试点 |
+| 500k/250k | 13.28 | 13.73 | |
+| 200k/100k | 5.84 | 7.02 | |
+| 100k/50k | 3.64 | 4.13 | |
+| 100k/10k | 3.58 | 4.72 | |
+| 1M/100k | 18.37 | 19.00 | blocks=10, absDivNewtonCore2 |
+
+**性能对比**:
+- cyclic 启用 (commit cb93374, 有 9/281 bug): 1M/500k = 21.48ms
+- cyclic 禁用 + bug 已修复 (当前): 1M/500k = 23.37ms
+- **实际回退仅 ~9%**, 不是之前记录的 "2.3x"
+- 之前 "49ms / 2.3x回退" 是 `/usr/bin/time` (10ms 精度) 误判, 已更正
 
 ### 当前代码状态
 
 - moptm_fusion.cpp: cyclic 禁用 + 无 FMA + 修正2 carry bug 已修复
-- 性能: 1M/500k ~49ms (cyclic 禁用导致 2.3x 回退 vs 21ms)
+- 性能: 1M/500k 23.37ms (cyclic 禁用回退仅 ~9% vs 21.48ms, 非之前误判的 2.3x)
 - 正确性: 1250/1250 PASS
-- 待办: 修复 cyclic Bug #2 后重新启用 cyclic, 恢复 2.3x 性能
+- 待办: 修复 cyclic Bug #2 (qhat_span 额外高位 wrap) 后重新启用 cyclic, 恢复 ~9% 性能

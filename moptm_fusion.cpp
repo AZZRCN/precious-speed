@@ -14,8 +14,9 @@
 // cyclic (2NXN mod B^m-1) 路径: 禁用
 // absSub1 返回值捕获修复 (Bug #1) 不够, 仍有 9/281 失败 (a_max_b_random 等)
 // 根因: qhat_span 额外高位 wrap (Bug #2) + cyclic 精度边界问题
-// 性能回退 ~2.3x (1M/500k 21.5ms → 49.3ms), 但保证正确性
-// TODO: 修复 cyclic Bug #2 后重新启用, 恢复 2.3x 性能
+// 性能回退 ~9% (1M/500k 21.48ms → 23.37ms, perf_counter 精确测量)
+// NOTE: 之前记录的 "2.3x回退" 是 /usr/bin/time 精度不足 (10ms) 导致的误判
+// TODO: 修复 cyclic Bug #2 后重新启用, 恢复剩余 ~9% 性能
 #define DISABLE_2NXN_CYCLIC
 
 #ifndef HINT_MINI_HPP
