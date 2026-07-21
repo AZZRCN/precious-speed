@@ -3268,11 +3268,31 @@ namespace hint
             if (tprod.size() < prod_len_max) tprod.resize(prod_len_max);
             size_t qn = quotient.size;
             size_t qn_remaining = qn;
+            // OPT-2: 最后一块用更小的 inv_dft (当 this_in_last < in/2 时)
+            // 卷积长度 = this_in_last + in + 1 < 2*in+1, 可用更小 FFT size
+            // 仅当 int_ceil2 真正减半时才优化 (避免额外 DFT 成本抵消收益)
+            size_t this_in_last = qn % in;
+            bool use_smaller_last = false;
+            size_t inv_float_len_last = inv_float_len;
+            thread_local std::vector<double> inv_dft_buf_last;
+            if (this_in_last > 0 && this_in_last * 2 < in)
+            {
+                inv_float_len_last = int_ceil2(this_in_last + in + 1);
+                if (inv_float_len_last < inv_float_len)
+                {
+                    use_smaller_last = true;
+                    if (inv_dft_buf_last.size() < inv_float_len_last) inv_dft_buf_last.resize(inv_float_len_last);
+                    prepareDFT(inv_span, inv_dft_buf_last.data(), inv_float_len_last);
+                }
+            }
 #ifdef PROFILE_DIV
             auto _mu_t2 = std::chrono::high_resolution_clock::now();
             PROF_PRINT("  [prof] absDivMu: gap1 (fprintf=%.3f ms, resize=%0.3f ms)\n",
                     std::chrono::duration<double, std::milli>(_mu_t1b - _mu_t1).count(),
                     std::chrono::duration<double, std::milli>(_mu_t2 - _mu_t1b).count());
+            if (use_smaller_last)
+                PROF_PRINT("  [prof] absDivMu: OPT-2 last-block smaller inv_dft (this_in_last=%zu, fl=%zu vs %zu)\n",
+                        this_in_last, inv_float_len_last, inv_float_len);
 #endif
 
             while (qn_remaining > 0)
@@ -3293,11 +3313,15 @@ namespace hint
 #ifdef PROFILE_DIV
                 auto _blk_t0 = std::chrono::high_resolution_clock::now();
 #endif
-                fftMulPre(divid_high, inv_dft_buf.data(), inv_span.size, inv_float_len, qhat_full);
+                // OPT-2: 最后一块用更小的 inv_dft (FFT size 减半)
+                bool is_last_block = use_smaller_last && (qn_remaining == this_in_last);
+                size_t cur_inv_fl = is_last_block ? inv_float_len_last : inv_float_len;
+                const double *cur_inv_dft = is_last_block ? inv_dft_buf_last.data() : inv_dft_buf.data();
+                fftMulPre(divid_high, cur_inv_dft, inv_span.size, cur_inv_fl, qhat_full);
 #ifdef PROFILE_DIV
                 auto _blk_t1 = std::chrono::high_resolution_clock::now();
-                PROF_PRINT("  [prof]   block %zu: fftMulPre #1 (divid_high*inv, fl=%zu): %.3f ms\n",
-                        (qn - qn_remaining) / in, inv_float_len,
+                PROF_PRINT("  [prof]   block %zu: fftMulPre #1 (divid_high*inv, fl=%zu%s): %.3f ms\n",
+                        (qn - qn_remaining) / in, cur_inv_fl, is_last_block ? " [last-small]" : "",
                         std::chrono::duration<double, std::milli>(_blk_t1 - _blk_t0).count());
 #endif
 
