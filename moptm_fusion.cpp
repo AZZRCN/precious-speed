@@ -4014,6 +4014,58 @@ namespace {
         // 跳过单个分隔符 (空格/换行)
         if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
     }
+
+    // === ADD 小数字快速路径: T 大但数字短 (LC small_00: T=200000, 数字 1-18 位) ===
+    // 尝试解析 <= 18 位数字为 int64, 跳过 Integer 对象开销
+    static inline bool tryParseI64(const char *start, size_t len, int64_t &val) {
+        if (len == 0 || len > 19) return false;
+        bool neg = false;
+        size_t i = 0;
+        if (start[0] == '-') {
+            neg = true;
+            i = 1;
+            if (len == 1) return false;
+        }
+        size_t digit_len = len - i;
+        if (digit_len == 0 || digit_len > 18) return false;
+        int64_t v = 0;
+        for (; i < len; i++) {
+            char c = start[i];
+            if (c < '0' || c > '9') return false;
+            v = v * 10 + (c - '0');
+        }
+        val = neg ? -v : v;
+        return true;
+    }
+
+    // int64 转字符串写入 oBuffer (无 Integer 开销)
+    static inline void writeI64(int64_t val) {
+        if (val == 0) { *oCursor++ = '0'; return; }
+        bool neg = false;
+        uint64_t uv;
+        if (val < 0) {
+            neg = true;
+            uv = uint64_t(-(val + 1)) + 1;
+        } else {
+            uv = uint64_t(val);
+        }
+        char tmp[20];
+        int pos = 0;
+        while (uv > 0) {
+            tmp[pos++] = char('0' + uv % 10);
+            uv /= 10;
+        }
+        if (neg) *oCursor++ = '-';
+        while (pos > 0) *oCursor++ = tmp[--pos];
+    }
+
+    // 从 iCursor 读 token (不解析), 推进游标, 返回 token 起始指针和长度
+    static inline void readToken(const char *&ptr, size_t &len) {
+        ptr = iCursor;
+        len = swarTokenLen(iCursor);
+        iCursor += len;
+        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
+    }
 }
 #if defined(HINT_OP_ADD)
 int main() {
@@ -4063,18 +4115,22 @@ int main() {
 #ifdef PROFILE_DIV
         auto _p0 = std::chrono::high_resolution_clock::now();
 #endif
-        parseInteger(a);
-        parseInteger(b);
-#ifdef PROFILE_DIV
-        auto _p1 = std::chrono::high_resolution_clock::now();
-        t_parse += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
-#endif
-        a += b;
-#ifdef PROFILE_DIV
-        auto _p2 = std::chrono::high_resolution_clock::now();
-        t_add += std::chrono::duration<double, std::milli>(_p2 - _p1).count();
-#endif
-        writeHint(a);
+        // 小数字快速路径: <= 18 位十进制用 int64 直接计算
+        const char *sa, *sb;
+        size_t la, lb;
+        readToken(sa, la);
+        readToken(sb, lb);
+        int64_t va, vb;
+        if (tryParseI64(sa, la, va) && tryParseI64(sb, lb, vb)) {
+            // 两个数都 <= 18 位, 和 < 2*10^18 < INT64_MAX, 不溢出
+            writeI64(va + vb);
+        } else {
+            // 慢速路径: 大数字走 Integer
+            a.fromCharRange(sa, sa + la);
+            b.fromCharRange(sb, sb + lb);
+            a += b;
+            writeHint(a);
+        }
         *oCursor++ = '\n';
 #ifdef PROFILE_DIV
         auto _p3 = std::chrono::high_resolution_clock::now();
