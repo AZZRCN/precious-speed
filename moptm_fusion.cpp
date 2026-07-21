@@ -1,87 +1,10 @@
-// ============================================================================
-// #pragma GCC optimize("O3,unroll-loops")2026年7月17日20:25:16停用，因为不是LC原生
-// 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 
-// 　 　 moptm (masonxiong_opt mixed) v2 　 　   ( ͡° ͜ʖ ͡°)
-// 　 　 HyperInt-mini 融合优化最终版 　 　 　 　 
-// 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 
-// ============================================================================
-// 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 
-//   【三题统一】ADD / MUL / DIV → -D 编译开关切换 main
-// 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 
-//   https://judge.yosupo.jp/problem/addition_of_big_integers
-//   https://judge.yosupo.jp/problem/multiplication_of_big_integers
-//   https://judge.yosupo.jp/problem/division_of_big_integers
-// 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 　 
-// ============================================================================
-//   ■ 底座致谢
-// 　 　 
-//   hint 库 (https://github.com/With-Sky/HyperInt-mini)
-//   — BASE = 10^4, uint16_t 肢, radix-4 自排序 DIF/DIT FFT
-//   — 牛顿迭代求逆 + Core2 分块除法
-// 　 　 
-// ============================================================================
-//   ■ 优化清单 ( ˘ ³˘)♥
-// 　 　 
-//   【算术内核】
-//   • add_half / sub_half 无分支掩码化 — 告别 cmov，拥抱算术
-//   • absAdd 双肢打包加法 (uint32_t) — 串行进位链减半，吞吐翻倍
-//   • absSub / absAdd 8 路展开 — 循环开销再砍一刀
-// 　 　 
-//   【FFT 内核】
-//   • fftMul / fftSqr / fftMulPre 进位传播 8 路展开
-//   • 共享 FFT 实例 (getSharedFFT) — 不重复造轮子
-// 　 　 
-//   【乘法专属】
-//   • fftMulUnbalanced 非对称乘法拆分 — DFT 预计算 + 分块 fftMulPre 复⽤
-//     chunk = small.size，逐块累计进位，避免大 FFT 中 90%+ 的零填充浪费
-//     阈值: sml≥16384 且 big/sml≥6 启⽤（1M*100k 从 0.99x 提升⾄ 0.90x）
-// 　 　 
-//   【除法专属】
-//   • divisor_dft 预计算 → absInvNewton B-1 优化 (省 1 次 DFT)
-//   • blocks ≥ 2 启用 fftMulPre 快速路径 (DFT 重用于全部分块) [方案 D: 原 ≥ 3]
-//   • absInvNewton 基例阈值 64 (原版 16) — 递归深度减少 ≈3 层
-// 　 　 
-//   【I/O】
-//   • cin 批量读 (streambuf) + oBuffer 零拷贝写
-//   • writeTo 4 位查表替代 itostr4 除法
-// 　 　 
-// ============================================================================
-//   ■ 性能 (╯°□°）╯︵ ┻━┻
-// 　 　 
-//   编译: g++ -O3 -mavx2 -mfma -funroll-loops
-//   测试: 10 runs + 2 warmup, 取中位数 (去最⾼最低)
-// 　 　 
-//   ADD LC:   1M+1M     moptm 14.1ms  vs best 19.1ms  → 0.73x  (-27%)
-//   ADD 100k+100k        8.7ms  vs best 19.1ms  → 0.45x  (-55%)
-//   ADD 500k+500k       11.3ms  vs best 15.5ms  → 0.73x  (-27%)
-// 　 　 
-//   MUL LC:   500k*500k moptm 16.8ms  vs best 20.7ms  → 0.81x  (-19%)
-//   MUL 100k*100k        9.8ms  vs best 15.1ms  → 0.65x  (-35%)
-//   MUL 300k*300k       15.4ms  vs best 19.8ms  → 0.78x  (-22%)
-// 　 　 
-//   DIV LC:   1M/500k   moptm 37.1ms  vs best 40.2ms  → 0.92x  ( -8%)
-//   DIV 1M/100k         28.3ms  vs best 31.4ms  → 0.90x  (-10%)
-//   DIV 1M/999k         21.8ms  vs best 23.5ms  → 0.93x  ( -7%)
-// 　 　 
-//   ★ 全部 14 个标准测试⽤例 + 38 个扩展测试⽤例 moptm 均快于 best ★
-//   ★ 正确性: moptm vs best 逐字节对比，全数通过 ★
-// 　 　 
-// ============================================================================
-//   ■ 编译 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧
-// 　 　 
-//   g++ -std=c++20 -O3 -mavx2 -mfma -funroll-loops \
-//       -DHINT_OP_ADD -o moptm_ADD.exe moptm.cpp
-//   g++ -std=c++20 -O3 -mavx2 -mfma -funroll-loops \
-//       -DHINT_OP_MUL -o moptm_MUL.exe moptm.cpp
-//   g++ -std=c++20 -O3 -mavx2 -mfma -funroll-loops \
-//       -DHINT_OP_DIV -o moptm_DIV.exe moptm.cpp
-// 　 　 
-// ============================================================================
-//   Author: AZZRCN (qazwsx233343@163.com)
-//   GitHub: https://github.com/AZZRCN
-// 　 　 
-//   "Talk is cheap. Show me the code." — Linus Torvalds
-// ============================================================================
+// AZZRCN
+// https://github.com/AZZRCN
+//
+// 三合一提交文件: 提交 LC 时取消注释对应 #define 即可切换 ADD / MUL / DIV
+//   #define HINT_OP_ADD    // Addition of Big Integers
+//   #define HINT_OP_MUL    // Multiplication of Big Integers
+#define HINT_OP_DIV          // Division of Big Integers (默认)
 
 #ifndef HINT_MINI_HPP
 #define HINT_MINI_HPP
