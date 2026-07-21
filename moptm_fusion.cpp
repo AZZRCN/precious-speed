@@ -6,6 +6,10 @@
 //   #define HINT_OP_MUL    // Multiplication of Big Integers
 #define HINT_OP_DIV          // Division of Big Integers (默认)
 
+// LC 评测机: GCP c2-standard-4 (Cascade Lake, AVX2+FMA+BMI2)
+// #pragma GCC target 可用 (与无效的 #pragma GCC optimize 不同, target 控制指令集)
+#pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")
+
 // 禁用 cyclic (2NXN mod B^m-1) 路径: LC 实测 burnikel_ziegler_bound / r_nearly_zero 等用例
 // 触发 assert 和 WA (商差1), 根因是 cyclic unwrap 精度问题. 禁用后回退到线性卷积 + absInvNewton,
 // 保证正确性. 性能损失 ~7% (1M/500k 18.3ms → ~19.7ms)
