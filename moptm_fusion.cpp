@@ -3319,9 +3319,11 @@ namespace hint
                 {
                     Span prod_mod_span(tprod.data(), cyclic_m);
                     fftMulModBm1Pre(qhat_span, divisor_dft_mod_buf.data(), len2, cyclic_m, prod_mod_span);
-                    size_t wn = len2 + this_in - cyclic_m;
-                    if (wn > 0)
+                    // FIX: 当 len2+this_in <= cyclic_m 时, 卷积长度 <= cyclic_m, 循环卷积 == 线性卷积, 无需 unwrap
+                    //   (原代码 size_t wn = len2+this_in-cyclic_m 在此情况下 underflow 成巨大数, 导致越界 SIGSEGV)
+                    if (len2 + this_in > cyclic_m)
                     {
+                        size_t wn = len2 + this_in - cyclic_m;
                         // GMP L226: tp[0..wn-1] -= rp[dn-wn..dn-1]
                         //   moptm window 布局: [np_new(低 this_in), rp_old(高 len2)]
                         //   rp_old = window[this_in .. len2+this_in-1]
@@ -3339,11 +3341,13 @@ namespace hint
                         View rp_cmp(window.ptr + len2, cmp_len);
                         View tp_cmp(tprod.data() + len2, cmp_len);
                         bool cx = (absCompare(rp_cmp, tp_cmp) < 0);
-                        // GMP L229: ASSERT_ALWAYS (cx >= cy) — 这里 cy = borrow
-                        // GMP L230: mpn_incr_u (tp, cx - cy)
-                        Limb incr = Limb(cx) - Limb(borrow);  // 0 or 1 (assert: cx >= borrow)
-                        if (incr > 0) {
-                            absAdd1(prod_mod_span, 1, prod_mod_span);
+                        // GMP L229: ASSERT_ALWAYS (cx >= cy) — GMP 保证, moptm 可能违反
+                        // GMP L230: mpn_incr_u (tp, cx - cy) — 用有符号运算正确处理 cx < borrow
+                        int32_t incr_signed = int32_t(cx) - int32_t(borrow);
+                        if (incr_signed > 0) {
+                            absAdd1(prod_mod_span, 1, prod_mod_span);  // tp += 1
+                        } else if (incr_signed < 0) {
+                            absSub1(prod_mod_span, 1, prod_mod_span);  // tp -= 1
                         }
                     }
                     // 不重建 prod 高位! 真实 prod 高 wn 位由 r-based 修正循环处理
@@ -3380,60 +3384,61 @@ namespace hint
 #endif
 
 #ifndef DISABLE_2NXN_CYCLIC
-                // === cyclic 路径修正逻辑 ===
-                // 已有: tprod[0..cyclic_m-1] = 近似的 product 低 cyclic_m 位 (unwrap 后)
-                // 直接计算 remainder = window - product 低 len2 位, 带 borrow 检测
-                // 注意: 近似 product 可能有 ±1 误差, 由修正循环处理
-                bool borrow;
+                // === cyclic 路径修正逻辑 (GMP mu_divappr_q.c L235-271, r 方法 + 双向修正) ===
+                // GMP: r = rp[dn-in] - tp[dn], 反映 qhat 偏差
+                //   映射: dn=len2, in=this_in, rp[dn-in]=window[len2], tp[dn]=tprod[len2]
+                //   window=[np_new(this_in), rp_old(len2)] → rp_old[i]=window[this_in+i]
+                //   rp[dn-in]=rp_old[len2-this_in]=window[len2]
+                // GMP 保证 r >= 0 (inv 偏小 → qhat 偏小); moptm 的 absInvNewton 可能产生偏大 inv,
+                //   导致 r < 0 (qhat 偏大), 需要双向修正
+                int32_t r = int32_t(window[len2]) - int32_t(tprod[len2]);
+
+                // 减法: tprod[0..len2-1] = window[0..len2-1] - tprod[0..len2-1] (GMP L239-248)
+                //   window[0..this_in-1]=np_new, window[this_in..len2-1]=rp_old[0..len2-this_in-1]
+                //   cy = 高位 borrow
+                bool cy;
                 {
-                    // remainder = window - product (低 len2 位)
-                    // window 低 len2 位 = window[0..len2-1]
-                    // product 低 len2 位 = tprod[0..len2-1]
                     View np_chunk(window.ptr, this_in);
                     Span tp_low(tprod.data(), this_in);
-                    borrow = absSub(np_chunk, tp_low, tp_low);
+                    cy = absSub(np_chunk, tp_low, tp_low);
                     if (len2 != this_in) {
                         Span tp_high(tprod.data() + this_in, len2 - this_in);
                         View rp_low(window.ptr + this_in, len2 - this_in);
                         bool cy2 = absSub(rp_low, tp_high, tp_high);
                         bool cy3 = false;
-                        if (borrow) {
+                        if (cy) {
                             cy3 = absSub1(tp_high, 1, tp_high);
                         }
-                        borrow = cy2 || cy3;
+                        cy = cy2 || cy3;
                     }
                 }
 
-                // --- 修正 1: 若 borrow (product > window), 向下修正 ---
-                int corr_down = 0;
-                while (borrow && corr_down < 10) {
-                    // remainder += divisor (因为 remainder = window - product 为负)
-                    // remainder = remainder + divisor = window - (product - divisor) = window - (qhat-1)*divisor
-                    bool carry = absAdd(Span(tprod.data(), len2), divisor, Span(tprod.data(), len2));
-                    // carry 应该为 false (因为 remainder + divisor < divisor + divisor = 2*divisor, 但 remainder 是负的且绝对值 < divisor)
-                    // 实际上 borrow 表示 window < product, 所以 remainder = window - product + B^len2 (补码表示)
-                    // remainder + divisor = window - product + B^len2 + divisor
-                    // 如果 product - window < divisor (qhat 只偏大 1), 则 remainder + divisor >= B^len2, carry = true
-                    // 且结果的低 len2 位 = window - product + divisor = window - (qhat-1)*divisor (正数)
-                    // 这里 borrow 已经为 true, 说明 product > window
-                    // 我们需要: remainder += divisor, qhat -= 1
-                    // 用补码思维: remainder (补码) + divisor = (window - product + B^len2) + divisor
-                    //   = window - (product - divisor) + B^len2
-                    //   如果 product - divisor <= window, 则 carry = 1, 结果低 len2 位 = window - (product - divisor) (正数)
-                    //   如果 product - divisor > window, 则 carry = 0, 结果仍是补码 (borrow 仍为 true)
-                    // 所以新的 borrow = !carry
-                    borrow = !carry;
-                    absSub1(qhat_span, 1, qhat_span);
-                    corr_down++;
+                // GMP L254: r -= cy
+                r -= int32_t(cy);
+
+                // 双向修正: r > 0 表示 qhat 偏小 (需 qhat+1), r < 0 表示 qhat 偏大 (需 qhat-1)
+                // GMP L255-264: while (r != 0) { qhat++; rp -= divisor; r -= cy; }
+                //   加 10 次限制防止 unwrap 误差导致的异常循环
+                int corr_cnt = 0;
+                while (r != 0 && corr_cnt < 10) {
+                    if (r > 0) {
+                        // qhat 偏小: qhat+1, rp -= divisor
+                        absAdd1(qhat_span, 1, qhat_span);
+                        bool b = absSub(Span(tprod.data(), len2), divisor, Span(tprod.data(), len2));
+                        r -= int32_t(b);  // b=1 表示 rp < divisor (有借位), r 减小
+                    } else {
+                        // qhat 偏大: qhat-1, rp += divisor
+                        absSub1(qhat_span, 1, qhat_span);
+                        bool carry = absAdd(Span(tprod.data(), len2), divisor, Span(tprod.data(), len2));
+                        r += int32_t(carry);  // carry=1 表示溢出 (rp 原为补码负数), r 增大
+                    }
+                    corr_cnt++;
                 }
 
-                // --- 修正 2: remainder >= divisor ? (qhat 偏小) ---
-                int corr_up = 0;
-                while (corr_up < 10) {
-                    if (absCompare(Span(tprod.data(), len2), divisor) < 0) break;
+                // GMP L265-270: if (rp >= divisor) { qhat++; rp -= divisor; }
+                if (absCompare(Span(tprod.data(), len2), divisor) >= 0) {
                     absSub(Span(tprod.data(), len2), divisor, Span(tprod.data(), len2));
                     absAdd1(qhat_span, 1, qhat_span);
-                    corr_up++;
                 }
 #else
                 // --- 修正 1: product > window ? (qhat 偏大) ---
@@ -4097,6 +4102,32 @@ int main() {
     if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
 
     hint::Integer a, b;
+#ifdef BENCH_INTERNAL
+    // 内部计时模式: 读1对, 循环计算 N 次, 每次单独计时
+    parseInteger(a);
+    parseInteger(b);
+    // warmup
+    hint::Integer c;
+    for (int i = 0; i < 3; i++) { c = a; c += b; }
+    const int N = 20;
+    double times[20];
+    double total = 0;
+    for (int i = 0; i < N; i++) {
+        c = a;
+        auto t0 = std::chrono::high_resolution_clock::now();
+        c += b;
+        auto t1 = std::chrono::high_resolution_clock::now();
+        times[i] = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        total += times[i];
+    }
+    std::sort(times, times + N);
+    fprintf(stderr, "MIN: %.3f  MED: %.3f  AVG: %.3f  MAX: %.3f  TOTAL: %.3f\n",
+            times[0], times[N/2], total/N, times[N-1], total);
+    writeHint(c);
+    *oCursor++ = '\n';
+    flushOutput();
+    return 0;
+#endif
 #ifdef PROFILE_DIV
     double t_parse = 0, t_add = 0, t_write = 0;
     auto _t0 = std::chrono::high_resolution_clock::now();
@@ -4147,6 +4178,32 @@ int main() {
     }
     if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
     hint::Integer a, b;
+#ifdef BENCH_INTERNAL
+    // 内部计时模式: 读1对, 循环计算 N 次, 每次单独计时
+    parseInteger(a);
+    parseInteger(b);
+    // warmup
+    hint::Integer c;
+    for (int i = 0; i < 3; i++) { c = a; c *= b; }
+    const int N = 20;
+    double times[20];
+    double total = 0;
+    for (int i = 0; i < N; i++) {
+        c = a;
+        auto t0 = std::chrono::high_resolution_clock::now();
+        c *= b;
+        auto t1 = std::chrono::high_resolution_clock::now();
+        times[i] = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        total += times[i];
+    }
+    std::sort(times, times + N);
+    fprintf(stderr, "MIN: %.3f  MED: %.3f  AVG: %.3f  MAX: %.3f  TOTAL: %.3f\n",
+            times[0], times[N/2], total/N, times[N-1], total);
+    writeHint(c);
+    *oCursor++ = '\n';
+    flushOutput();
+    return 0;
+#endif
     while (t--) {
         parseInteger(a);
         parseInteger(b);

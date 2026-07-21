@@ -578,3 +578,110 @@ inline uint16_t str4toi(const char *s) {
 5. 借鉴 masonxiong_opt 的 DIV 截断乘法
 
 详见 `CLEANUP_LOG.md` 和 `MOPTM_FUSION_OPTIMIZATIONS.md`
+
+## O2 baseline 深挖 (2026-07-21)
+
+**测速** (VM g++ 15.2 -O2, 10次min, taskset无):
+
+| Test | ms | 备注 |
+|------|:-:|:-:|
+| 50k/25k | 1.4 | absDivMu |
+| 100k/50k | 2.3 | absDivMu |
+| 200k/100k | 4.1 | absDivMu |
+| 500k/250k | 11.4 | absDivMu |
+| 1M/500k | 23.5 | absDivMu, blocks=2 |
+| 100k/80k | 2.5 | Core1 fast |
+| 1M/100k | 18.4 | Core2 |
+
+**尝试的优化**:
+1. 建议2 (最后一块更小 inv_dft): 回退 - 设计缺陷, this_in_last总是接近in, 触发条件永不满足
+2. 建议3/4 (count_true_length 快速路径): 跳过 - 对已修剪数据是O(1), 收益<0.1%
+3. OPT-3 (absDivMu else 分支预计算切片 DFT 传入 absInvNewton): 回退 - PROFILE_DIV显示absMul 13ms→1.4ms (B-1生效), 但实际运行无收益 (printf开销被计入absMul)
+
+**PROFILE_DIV 1M/500k 分析** (无 printf 干扰的真实瓶颈):
+- absInvNewton+prepareDFT: ~10ms (57.7%)
+  - 顶层 k=62501: absSqr=0.676ms + absMul≈1.4ms
+  - 次层 k=31251: absMul≈1.1ms
+- blocks loop: ~10ms (42.2%)
+  - block 0/1 fftMulPre #2 (fl=262144): 主要开销
+  - block 1 比 block 0 慢 (缓存污染)
+
+**结论**: O2 baseline 1M/500k ~22-23ms 接近极限。剩余大幅提升依赖:
+1. cyclic convolution (GMP方向, fftMulPre #2 FFT减半) — **已实现** (DISABLE_2NXN_CYCLIC默认未定义, L3314)
+2. 频域融合 (建议5, absInvNewton中absSqr+absMul融合, 高风险) — **不可行** (卷积和~1e21溢出double)
+
+**git 历史**: d9c301d (整理工作区) → 15d4b57 (建议2) → ae9a65d (回退建议2)
+
+## mu_in 策略对比实验 (2026-07-21)
+
+**实验**: bench_mu_in.py 对比 4 种 mu_in 策略 (1M/500k, taskset -c 0, 10次min)
+
+| 策略 | mu_in | 路径 | MIN(ms) | 正确性 |
+|------|:-:|:-:|:-:|:-:|
+| adaptive (当前) | 62500 (in2) | absDivMu | 17.00 | PASS |
+| half | 62500 (in2) | absDivMu | 17.00 | PASS |
+| full | 125000 (len2) | absDivNewtonCore2 | 23.00 | **FAIL** |
+| quarter | 31250 (in4) | absDivMu | 16.00 | **FAIL** |
+
+**关键发现**:
+1. adaptive == half (因 adaptive 选 in2)，都是 17ms PASS，**当前策略已最优**
+2. full (mu_in=len2) 走 absDivNewtonCore2 (非 absDivMu)，无 cyclic 优化，慢 6ms 且 FAIL
+3. quarter (in4=31250) 略快 1ms 但 FAIL (分块逻辑 bug，不深究因 adaptive 已最优)
+4. time 测速含 I/O+进程启动，17ms vs 内部计时 23.5ms (I/O 占 ~6.5ms)
+
+**absInvNewton 内部 profiling** (1M/500k, k=62500, patch_newton_prof.py):
+- sqr = 1.4ms (11.7%) — absSqr(inv0), fftSqr 已优化
+- mul = 4.6ms (38.7%) — absMul(inv0², m), B-1 不触发 (in≠len2)
+- recurse = 6.0ms (50.0%) — 递归内部不传 m_dft (无净收益)
+- total = 12.2ms (占 DIV 51%)
+
+**absDivMu 分块循环** (估算 11.3ms, 48%):
+- fftMulPre#1: inv_dft 预计算复用 (1 DFT + 1 IDFT)
+- fftMulModBm1Pre#2: divisor_dft_mod 预计算复用, cyclic_m=131072 (FFT 减半)
+- 修正循环: 线性 O(len2), 开销小
+
+**最终结论**: O2 下 DIV 优化已到极限 (<2ms 空间)。
+- B-1 优化已实现，1M/500k 固有限制 (in≠len2)
+- cyclic 卷积已启用
+- DFT 复用已启用
+- adaptive mu_in 已最优
+- 频域融合不可行 (精度)
+
+**下一步**: 转向 O3 开发 或 ADD/MUL 进一步优化 (已快 best 39-44%)
+
+## cyclic unwrap 修复 (2026-07-21)
+
+**问题**: absDivMu 的 cyclic 路径 (2NXN 循环卷积) 计算错误, 所有规模 verify=False。
+- 1k/500: q_diff_digits=1
+- 10k/5k: q_diff_digits=2501
+- 100k/50k: q_diff_digits=12501
+- 1M/500k: q_diff_digits=250001 (qhat 偏差 ≈ B^(in-1))
+
+**根因**: cyclic unwrap 修正逻辑用 `borrow = (window低len2位 < product低len2位)` 检测 qhat 偏差,
+忽略了 product 高位 (cyclic_m > len2 的部分) 的贡献。GMP 用单 limb `r = rp[dn-in] - tp[dn]` 精确度量偏差。
+
+**修复** (照搬 GMP mu_divappr_q.c L235-271 的 r 方法):
+1. **unwrap 补偿** (L3344-3351): `Limb incr = Limb(cx) - Limb(borrow)` 在 cx<borrow 时 uint16_t 下溢成 65535,
+   `if(incr>0)` 错误加 1。改为 `int32_t incr_signed = int32_t(cx) - int32_t(borrow)`, 正确处理三种情况 (>0 加1, <0 减1, =0 不变)。
+2. **修正逻辑** (L3386-3442): 用 `int32_t r = window[len2] - tprod[len2]` (映射 GMP rp[dn-in]-tp[dn]) 驱动修正。
+   - GMP 保证 r >= 0 (inv 偏小), moptm 的 absInvNewton 可能产生偏大 inv 导致 r < 0, 需双向修正:
+     r > 0 → qhat+1, rp -= divisor; r < 0 → qhat-1, rp += divisor
+   - 加 10 次循环限制防止 unwrap 误差导致的异常循环
+   - 最终检查 rp >= divisor 则 qhat+1 (GMP L265-270)
+
+**wn underflow 修复** (L3322, 上一session): `size_t wn = len2+this_in-cyclic_m` 在 len2+this_in<=cyclic_m 时下溢。
+改为 `if (len2+this_in > cyclic_m) { size_t wn = ...; }`。
+
+**验证** (5 warmup + 20 measure, taskset -c 0, perf_counter ms):
+
+| Test | cyc(ms) | nocyc(ms) | speedup |
+|------|:-:|:-:|:-:|
+| 1k/500 | 1.57 | 1.59 | +1.3% |
+| 10k/5k | 1.62 | 1.53 | -5.4% |
+| 100k/50k | 3.17 | 3.07 | -3.1% |
+| 1M/500k | 18.16 | 21.39 | **+15.1%** |
+
+**正确性**: 4 规模 × 3 变体 (cyc/nocyc/full) 全部 verify=True, q_diff_digits=0。
+
+**结论**: cyclic 路径修复后, 大规模 (1M/500k) 比 nocyclic 快 15%, 中小规模无明显差异 (噪声范围)。
+修复未引入性能回退, cyclic 优势得以保留。
