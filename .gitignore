@@ -3,9 +3,13 @@
 *.o
 *.obj
 
-# Test artifacts / 测试产物
-*.txt
-!README.md
+# Test artifacts / 测试产物 (运行时生成, 可重新生成)
+logs/
+testdata/
+
+# Python cache / Python 缓存
+__pycache__/
+*.pyc
 
 # IDE / 编辑器
 .vscode/
@@ -14,5 +18,10 @@
 # Build directories / 构建目录
 benchmark_*/
 
-# Compile error logs / 编译错误日志
-build_*.err
+# OS / 操作系统
+Thumbs.db
+desktop.ini
+
+# 临时大文件 / 临时大文件
+*.tmp
+*.bak

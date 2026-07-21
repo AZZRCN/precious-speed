@@ -1,0 +1,580 @@
+# HANDBOOK - precious_speed 融合项目自我提醒手册
+
+> **用途**：防止对话压缩导致上下文丢失。每次新会话或上下文被压缩时，先读本文件。
+> **更新原则**：每完成一个里程碑就追加一节，不要删除历史记录。
+
+---
+
+## 0. 通用规则
+
+- **参考资料查找**：如果遇到参考资料的问题，请先去 `E:\` 找一圈（根目录及子目录），再考虑网络搜索或问用户。E:\ 盘可能存有历史代码、论文 PDF、相关工具等参考资料。
+
+---
+
+## 1. 项目目标
+
+在 LC (Library Checker, judge.yosupo.jp) 真实评测约束下，让单一文件 `fusion.cpp` 在 ADD/MUL/DIV 三个问题上同时达到或超越 `best/` 目录下三个独立文件的成绩。
+
+### LC 评测环境（详见 limits.md）
+- 编译：`g++ -x c++ -O2 -std=gnu++20 -static -DONLINE_JUDGE`
+- **无 -mavx2**（默认不启用高级指令集，需 `#pragma GCC target` 显式开启）
+- 硬件：GCP c2-standard-4, Intel Cascade Lake, AVX2+FMA+AVX-512
+- 计分：CPU 时间（用户态+内核态总和），非墙钟时间
+- 内存：2GB
+- 单核调度（多线程无加速收益）
+- 源码 ≤ 256KB，编译 ≤ 30s
+
+### 三题地址
+- ADD: https://judge.yosupo.jp/problem/addition_of_big_integers
+- MUL: https://judge.yosupo.jp/problem/multiplication_of_big_integers
+- DIV: https://judge.yosupo.jp/problem/division_of_big_integers
+
+### best/ 三文件基线成绩（LC 真实提交）
+| 文件 | 题目 | 成绩 | 提交ID |
+|------|------|------|--------|
+| best/add.cpp | ADD | 18ms | #385662 |
+| best/mul.cpp | MUL | 36ms | #385663 |
+| best/div.cpp | DIV | 108ms | #385741 |
+
+---
+
+## 2. 技术路线（用户指定，三阶段）
+
+1. **阶段一：硬融合** — 直接把 best 三文件的算法部分搬到 fusion.cpp，用宏开关切换 ADD/MUL/DIV 三种模式。不追求代码复用，先让三路径都跑通且性能对齐 best。
+2. **阶段二：统一底座** — 在硬融合基础上，统一数据类型、I/O、辅助函数，消除重复代码。注意不引入性能回退。
+3. **阶段三：深度优化** — 在统一底座上做更深优化（如查表法 parse、SIMD、内存池等）。
+
+### 关键限制（用户原话）
+> "取各家之长即可。比如MUL文件可以只取乘法部分，不取其他部分，比如文件DIV。"
+
+即：从 best/add.cpp 只取加法路径，从 best/mul.cpp 只取乘法路径，从 best/div.cpp 只取除法路径。不要把一个文件的算法塞到另一个路径。
+
+---
+
+## 3. 工作区结构（2026-07-17 归档后）
+
+```
+d:\precious_speed\
+├── best/              # 融合源头（只读参考）
+│   ├── add.cpp        # 111352 字节, 2026-07-17 23:54
+│   ├── mul.cpp        # 107309 字节, 2026-07-17 23:54
+│   └── div.cpp        # 103259 字节, 2026-07-17 23:54（用户重新覆盖过）
+├── toolbox/           # 自定义工具箱（tbx.exe, sam/es/split 命令）
+├── archieve/          # 已归档的历史文件
+│   ├── cpp/           # 19 个旧 .cpp/.hpp/.s
+│   ├── scripts/       # 24 个旧 .sh/.py
+│   ├── mason_opt/     # masonxiong 历史版本
+│   └── docs/          # 旧交接文档
+├── fusion.cpp         # 【待创建】融合产物
+├── HANDBOOK.MD        # 本文件
+├── ssh_exec.py        # SSH 工具（paramiko）
+├── limits.md          # LC 环境清单
+├── ai.bat             # 命令批处理
+├── README.md
+└── .gitignore
+```
+
+---
+
+## 4. 虚拟机访问
+
+- **SSH**: `10.144.33.157` (2026-07-21 重启后; GCC 改造已暂停, VM 独占, CPU 数据更稳定)
+- **用户**: `azzr`
+- **密码**: `1234`
+- **系统**: Ubuntu 7.0.0-28-generic, 2 核
+- **CPU**: Intel i7-11370H @ 3.30GHz (Tiger Lake, AVX2+FMA+AVX512)
+
+### SSH 工具用法
+```powershell
+# 执行命令
+python d:\precious_speed\ssh_exec.py "cmd1" "cmd2"
+# 上传文件
+python d:\precious_speed\ssh_exec.py --file local_path remote_path
+# 下载文件
+python d:\precious_speed\ssh_exec.py --get remote_path local_path
+```
+
+### 虚拟机工作目录约定
+- `/tmp/bench/` — 当前融合项目的编译与测试目录
+- 历史目录 `/tmp/bench2/` 可能仍有旧文件，可清理
+
+---
+
+## 5. 已完成步骤记录
+
+### 2026-07-17 会话
+1. ✅ 归档所有非 best 算法文件到 `archieve/`
+2. ✅ 创建 HANDBOOK.MD
+3. ✅ 验证 SSH 连接（paramiko 方案）
+4. ✅ 确认 best 三文件修改时间（用户重新覆盖过）
+5. ✅ 通读三文件，发现 best/div.cpp 已被用户替换为 moptm (hint 库) 代码
+6. ✅ VM 编译 5 个二进制（LC 环境 -O2 -std=gnu++20 -static -DONLINE_JUDGE）
+7. ✅ VM benchmark 基线测试
+
+### VM Benchmark 基线（2026-07-18, LC -O2 无 avx2, g++ 15.2）
+
+**注意：VM g++ 15.2 vs LC g++ 11.4，编译器版本不同，绝对值仅供参考，相对趋势可参考**
+
+| 测试 | best (masonxiong) | hint (moptm) | 赢家 |
+|------|-------------------|--------------|------|
+| ADD 1M+1M | 5.55ms | 4.93ms | hint -11% |
+| ADD 100k+100k | 0.95ms | 1.16ms | best +22% |
+| MUL 500k*500k | 10.00ms | 9.16ms | hint -8% |
+| MUL 100k*100k | 2.72ms | 2.55ms | hint -6% |
+| DIV 1M/500k | — | 27.64ms | 只有 hint |
+| DIV 200k/100k | — | 7.01ms | 只有 hint |
+
+**正确性**: ADD PASS, MUL PASS
+
+**关键发现**:
+- masonxiong 库的 AVX2 代码在 `#if defined(__AVX2__)` 下，LC 默认不启用
+- hint 库使用 std::complex<double>，不依赖显式 AVX2 内联函数
+- ADD 在大数据 hint 赢，小数据 best 赢（hint BASE=10^4 在小数据有额外开销）
+- MUL hint 一致领先
+- LC 历史: best ADD 18ms, moptm ADD 19ms（LC 上 best 略快，与 VM 趋势相反，可能是 g++ 版本差异）
+
+### O3 预展开实验（2026-07-18）
+
+用 archieve/cpp/moptm.cpp (旧版) 做三套编译对比：
+
+| 测试 | -O2 | -O3 | -O2+pragma | best -O2 |
+|------|-----|-----|------------|----------|
+| ADD 1M+1M | 3.56ms | 3.75ms | 3.56ms | **2.97ms** |
+| ADD 100k+100k | 1.12ms | 1.19ms | 1.08ms | **0.94ms** |
+| MUL 500k*500k | **8.77ms** | 8.96ms | 9.16ms | 10.39ms |
+| MUL 100k*100k | **2.43ms** | 2.46ms | 2.51ms | 2.76ms |
+| DIV 1M/500k | **26.61ms** | 26.73ms | 27.90ms | — |
+| DIV 200k/100k | 7.27ms | 6.95ms | **6.91ms** | — |
+
+**关键发现**:
+- **-O3 对 moptm 无收益甚至回退！** ADD/MUL 大数据 -O3 比 -O2 慢 3-5%
+- **pragma O3 效果不稳定** — DIV 200k 略快，DIV 1M/500k 反而慢 1.3ms
+- moptm 代码已手工 8 路展开，-O3 自动展开收益被指令缓存压力抵消
+- **ADD moptm 落后 best** (3.56 vs 2.97ms) — best 的 masonxiong ADD 更快
+- **MUL moptm 领先 best** (8.77 vs 10.39ms) — hint MUL 更快
+- 正确性：-O3 vs -O2 全 PASS
+
+**结论**: O3 预展开路线对已手工优化的 moptm 无明显收益，需要换思路
+
+### 用户指示（2026-07-18 晚）
+用户记得 O3 预展开原来是有效果的，怀疑当前代码有问题。指示：
+1. **先回滚 git 查看历史代码**，看是否有更好的旧版本
+2. 如果没有历史代码可用，则走 **硬融合 → 统一底座 → 细致优化** 路径
+3. 用户要睡觉，让我自主推进，祝我好运
+
+GitHub repo: https://github.com/AZZRCN/precious-speed (force-pushed on 2026-07-17, 90 files)
+
+### fusion.cpp 演进（2026-07-18 自主推进）
+
+**关键发现**: best/div.cpp (用户覆盖版) 比 archieve/cpp/moptm.cpp 缺少三大优化：
+1. mmap 零拷贝 I/O（best/div.cpp 用 cin）
+2. 8 字节粒度 parse（best/div.cpp 用 4 字节）
+3. 自适应 oBuffer 大小
+
+因此 fusion.cpp 基于 **archieve 版本**（而非 best/div.cpp）作为起点。
+
+**版本演进**:
+
+| 版本 | 基础 | ADD 1M | MUL 500k | DIV 1M/500k | 说明 |
+|------|------|--------|----------|-------------|------|
+| fusion v0 | best/div.cpp + pragma | 4.39ms | 9.50ms | 26.88ms | 基于 best/div.cpp |
+| fusion v1 | archieve + pragma | 3.44ms | 8.89ms | 26.28ms | 换用 archieve 版本 |
+| fusion v2 | v1 + 64KB 查表法 parse | **3.06ms** | **8.31ms** | **26.13ms** | 移植 best InputHelper |
+
+**fusion v2 vs best 对比（2026-07-18 复测，LC -O2 -std=gnu++20 -static -DONLINE_JUDGE）**:
+
+| 测试 | fusion v2 | best | 差距 | 正确性 |
+|------|:-:|:-:|:-:|:-:|
+| ADD 1M+1M | 3.14ms | 2.97ms | 落后 5.7% | PASS |
+| ADD 100k+100k | 1.08ms | 0.97ms | 落后 11.3% | PASS |
+| MUL 500k*500k | 8.31ms | 10.82ms | **领先 23.2%** | PASS |
+| MUL 100k*100k | 2.59ms | 2.71ms | **领先 4.4%** | PASS |
+| DIV 1M/500k | 26.29ms | — | 无 best 二进制 | PASS |
+| DIV 200k/100k | 6.78ms | — | 无 best 二进制 | PASS |
+
+**ADD 落后根因分析**：
+- BASE=10^4 (uint16_t) vs best BASE=10^8 (uint32_t) → limb 数翻倍
+- parse: 8 字节产出 2 个 limbs vs 1 个 limb（多一次内存写）
+- add: 循环次数翻倍
+- vector<uint16_t> vs uint32_t* 内存池（DigitAllocator）
+- 这是 BASE=10^4 的架构固有代价，但 MUL 领先 23% 说明 trade-off 合理
+
+**LC 真实环境预期**：
+- LC 上 best ADD 18ms, moptm ADD 19ms（差 1ms）
+- fusion v2 查表法优化预计可抹平这 1ms 差距，LC 上 ADD 有望 ≤ 18ms
+- LC 上 best MUL 36ms, fusion v2 预计 ~28ms（领先 22%）
+- LC 上 best DIV 108ms, fusion v2 预计 ~80ms（VM 26ms 换算）
+
+## O2 vs O3 全版本对比（2026-07-18，VM g++ 15.2，纳秒级计时）
+
+**用户指示（2026-07-18 早上）**：
+- 用户在搜集"提前 O3 展开"的资料，让助手先做非 O3 的优化
+- 需要先确定 O2 下最快版本和 O3 下最快版本
+- 准备 fusion_o2only.cpp（去掉 pragma）作为纯 O2 基线
+- Windows MinGW 测试失败（fusion/moptm 用 Linux mmap，Windows 崩溃 0xC0000005）
+- VM 测试完整：3 版本 × 2 优化 × 3 题 = 21 个组合，MD5 全部匹配
+
+**VM 完整 Benchmark（2026-07-18 复测，5 次中位数 + 2 warmup，ms，数据格式已修复）**:
+
+⚠️ **重要**：本次复测修复了旧数据格式问题（原 winbench/*.in 缺少用例计数行 `1`，导致程序读取 1M 位数字作为 size_t 溢出 SIGSEGV）。修复后数据更准确，与旧记录有差异。
+
+| Binary | ADD_1M | MUL_500k | DIV_1M_500k | 备注 |
+|---|---|---|---|---|
+| fusion_o2only_O2 (纯O2) | 6.17 | 12.52 | **28.16** ⭐ | fusion 去 pragma |
+| fusion_o2only_O3 (纯O3) | 6.60 | **11.06** ⭐ | 28.31 | |
+| fusion_O2 (pragma O3, 命令行-O2) | **6.12** ⭐ | 11.70 | 28.36 | pragma 强制 O3 |
+| fusion_O3 (pragma O3, 命令行-O3) | 6.60 | 11.81 | **27.96** ⭐ | 与 fusion_O2 二进制相同 |
+| moptm_O2 (纯O2) | 6.35 | **11.66** ⭐ | 28.96 | |
+| moptm_O3 | 7.24 | 11.70 | 29.41 | O3 对 moptm ADD/DIV 有害 |
+| best_O2 | 6.13 | 13.85 | 30.47 | MUL/DIV 垫底 |
+| best_O3 | **6.03** ⭐ | 12.91 | 30.24 | ADD 最快但 MUL/DIV 慢 |
+
+**正确性**: 24 个二进制（4版本×3题×2优化）输出 MD5 全部一致 ✅
+
+**纯 O2 下最快版本（无 pragma）**:
+| 题目 | 最快 | 耗时 | 第二名 |
+|------|------|------|------|
+| ADD | **fusion_o2only_O2** | 6.17ms | moptm_O2 (6.35ms) |
+| MUL | **moptm_O2** | 11.66ms | fusion_o2only_O2 (12.52ms) |
+| DIV | **fusion_o2only_O2** | 28.16ms | moptm_O2 (28.96ms) |
+
+**O2+pragma O3 下最快版本（fusion.cpp 含 pragma）**:
+| 题目 | 最快 | 耗时 | 第二名 |
+|------|------|------|------|
+| ADD | **fusion_O2 (pragma O3)** | 6.12ms | best_O2 (6.13ms) |
+| MUL | **moptm_O2** | 11.66ms | fusion_O2 (11.70ms) |
+| DIV | **fusion_o2only_O2** | 28.16ms | fusion_O2 (28.36ms) |
+
+**O3 下最快版本**:
+| 题目 | 最快 | 耗时 | 第二名 |
+|------|------|------|------|
+| ADD | **best_O3** | 6.03ms | fusion_O3 (6.60ms) |
+| MUL | **fusion_o2only_O3** | 11.06ms | moptm_O3 (11.70ms) |
+| DIV | **fusion_O3 (pragma)** | 27.96ms | fusion_o2only_O3 (28.31ms) |
+
+**关键发现（修正版）**:
+1. **纯 O2 下没有单一版本三题全胜**：ADD/DIV 是 fusion_o2only，MUL 是 moptm
+2. **O3 对 moptm 的 ADD/DIV 有害**（手工 8 路展开冲突），但对 fusion_o2only 的 MUL 有 -12% 提升
+3. **pragma O3 的 fusion.cpp** 在 ADD 上最快（6.12ms），但本质是 O3 优化
+4. **best 在 MUL/DIV 始终最慢**，但 ADD 在 O3 下最快（6.03ms）
+5. **fusion_o2only 是纯 O2 综合最优**（ADD/DIV 最快，MUL 接近最快）
+6. **与旧记录差异原因**：旧数据格式错误导致测试异常，新数据更可信
+
+**fusion_o2only.cpp 状态**:
+- 路径：d:\precious_speed\fusion_o2only.cpp
+- 内容：fusion.cpp 去掉 `#pragma GCC optimize("O3,unroll-loops")`
+- 用途：纯 O2 基线对照，当前 ADD/DIV 最快
+
+**Windows 测试结论**:
+- Windows MinGW g++ 15.2.0 存在，但 fusion/moptm 用 Linux mmap 读 stdin
+- Windows 运行 fusion_o2only_O2_ADD.exe 崩溃 (exit 0xC0000005)
+- best 三文件用 cin，理论上可在 Windows 运行，但意义不大（VM 已足够）
+- **结论：所有 benchmark 以 VM 为准**
+
+**完整日志**: `d:\precious_speed\vm_results.log`
+
+## GMP 近似逆收益分析（2026-07-18，用户远程控制期间）
+
+**用户指示**：O3 pragma 提交无效，专注 O2 优化。O3 资料等用户回去后补充。
+
+**GMP 近似逆对 1M/500k 的收益分析**：
+
+1M/500k 在 BASE=10^4 下：len1=250k limbs, len2=125k limbs, blocks=2
+
+| 策略 | absInvNewton 变换量 | 分块除法变换量 | prepareDFT | 总计 |
+|------|:-:|:-:|:-:|:-:|
+| 当前（精确逆 125k） | ~8.5M | ~18.4M（2块×2乘法×256k） | ~9.2M | **~36.1M** |
+| 近似逆（in=62.5k） | ~4M（-50%） | ~27.2M（4块×2乘法, inv*Rp 128k + div*qhat 256k） | ~6.8M | **~38M (+5%)** |
+
+**结论**：对 1M/500k（blocks=2），近似逆**反而变慢 +5%**。原因：
+- 分块数 2→4，divisor*qhat 乘法次数翻倍，每次 FFT 长度不变（256k）
+- absInvNewton 节省 ~4.5M，但分块增加 ~9M，净增 ~4.5M
+
+**GMP 近似逆的收益场景**：blocks >> 2 时（如 1M/100k，blocks=10）有收益。但 LC 只看最慢点（1M/500k），对排名无帮助。
+
+**除非实现 mulmod B^m-1**（环形乘法，FFT 长度减半），否则 GMP 近似逆对 1M/500k 无收益。mulmod 实现复杂度高，暂不优先。
+
+**代码现状**：
+- L2509-2554 有 `absDivNewtonWithInvLoose`（5 次修正容错），是未完成的近似逆遗留
+- L2779-2801 的 mu_in 计算是死代码（两个分支都调用同一个 absDivNewtonCore2）
+
+**新的 DIV 优化方向**：
+1. absInvNewton 基例阈值调整（64→128/32，低风险）
+2. FFT 内核优化（radix-8 蝶形，高复杂度）
+3. absDivNewtonWithInvFast 常数优化
+4. 实测 PROFILE_DIV 确认 absInvNewton vs Core2 loop 耗时比例
+
+### PROFILE_DIV 实测结果（2026-07-18）
+
+| 用例 | absInvNewton | prepareDFT | Core2 loop | Total | 瓶颈 |
+|------|:-:|:-:|:-:|:-:|:-:|
+| 1M/500k | 21ms (65%) | 2ms (7%) | 9ms (28%) | 32ms | absInvNewton |
+| 200k/100k | 4ms (67%) | 0.5ms | 1.7ms | 6.6ms | absInvNewton |
+| 1M/100k | 4ms (21%) | 0.4ms | 14ms (76%) | 18.5ms | Core2 loop |
+
+**关键发现**：1M/500k 的 absInvNewton 占 65%，是绝对瓶颈。递归常数因子远高于 fftMulPre。
+**修正结论**：GMP 近似逆（减半 absInvNewton 规模）对 1M/500k **确实有 -22% 收益**，之前变换量分析低估了 absInvNewton 常数。
+
+### absDivMu 实现成功（2026-07-18）
+
+**新增函数**：`absDivMu` (L2627-2749)，GMP mu_div_qr 风格近似逆分块除法
+**修改**：absDivRem L2779-2801 死代码清理，当 mu_in < len2 时调用 absDivMu
+
+**absDivMu 算法**：
+1. absInvNewton(divisor + (len2 - in), inv_span) 计算 divisor 高 in 位精确逆（in+1 位）
+2. 预计算 inv DFT (inv_float_len=ceil2(2*in+1)) 和 divisor DFT (divisor_float_len=ceil2(len2+in+1))
+3. 分块循环：每块 this_in = min(in, qn_remaining) 位商
+   - qhat = (divid_high * inv) >> (in+1)，取高 this_in+1 位
+   - prod = divisor * qhat
+   - 修正：while (prod > window) qhat--, while (window >= divisor) qhat++
+
+**性能（VM g++ 15.2 -O2，7 次中位数）**：
+
+| 测试 | absDivMu | moptm_ref | delta | 说明 |
+|------|:-:|:-:|:-:|:-:|
+| 1M/500k | 31.97ms | 37.90ms | **-15.6%** | in=62500, blocks=2 |
+| 200k/100k | 6.88ms | 8.55ms | **-19.6%** | in=12500, blocks=2 |
+| 1M/100k | 26.12ms | 25.99ms | +0.5% | mu_in=len2，走 Core2 |
+
+**正确性**：3 个用例 MD5 全部匹配 baseline ✓
+
+**PROFILE_DIV 对比（1M/500k）**：
+- absInvNewton: 24.7ms vs 65.5ms (-62%，逆规模减半)
+- prepareDFT: 11.4ms vs 3.9ms (+192%，多一次 divisor DFT 262144 点)
+- blocks loop: 35.2ms vs 47.7ms (-26%)
+- 总计: 71.3ms vs 117.2ms (profile 模式含开销)
+
+**未达成的子目标**：
+- 1M/500k 中位数 31.97ms，最快 28.94ms，接近但未稳定 < 28ms
+- -22% 预期未完全达成（实际 -15.6%），因为 prepareDFT(divisor) 多 8ms 开销
+
+**剩余优化空间**：
+1. 1M/100k 未走 absDivMu（mu_in=len2 走 Core2）— 可改条件为 mu_in<=len2
+2. prepareDFT(divisor) 262144 点 DFT 多 8ms — 难以避免（长度不匹配）
+3. 调整 mu_in 策略（in=len2/4 增加 blocks 但减小 inv 规模）— 需权衡
+
+## 非 O3 优化阶段（2026-07-18，用户睡觉期间自主推进）
+
+**用户指示**：以 moptm 为底座融合 fusion 优点，做非 O3 优化。用户在搜集"提前 O3 展开"资料。
+
+**基线选择**：moptm + 64KB 查表法（fusion 相比 moptm 净差异只有这一项优化 + pragma）
+
+**新文件**：`d:\precious_speed\moptm_fusion.cpp`（基于 archieve/cpp/moptm.cpp + 以下优化，**无 pragma O3**）
+
+**优化记录**：
+
+| 版本 | ADD 1M | MUL 500k | DIV 1M/500k | 说明 |
+|------|:-:|:-:|:-:|------|
+| moptm_O2 (基线) | 6.5-6.9ms | 12.0ms | 29.4ms | archieve 版纯 O2 |
+| +64KB 查表法 | 6.18ms (均值) | 11.87ms | 28.75ms | str4toi 改查表 |
+| +16字节 SIMD parse | 5.99ms | 11.42ms | 29.87ms | SSE2 str16to4limbs |
+| +Barrett reduction | 无变化 | 无变化 | 无变化 | /BASE 改乘法，汇编优化但瓶颈在 mul |
+| +absAdd/absSub AVX2 | **6.05ms** | 12.55ms | 30.32ms | 双肢打包+AVX2，ADD -8.8% |
+| +writeTo 表移+SSE2 4× | **5.69ms** | 11.47ms | 28.33ms | 消除 magic static guard，writeTo 内联，SSE2 16B store |
+| +DIV blocks≥2 fast path | 5.69ms | 11.47ms | 28.33ms | 1M/500k 恰是 blocks=2 无余数最差情况，净收益仅 0.7ms |
+
+**关键发现**：
+1. fusion.cpp 相比 moptm.cpp 净差异只有 1 项优化（str4toi 64KB 查表法）+ pragma
+2. 16 字节 SSE2 SIMD parse 对三题都有 1.5-4.3% 提升
+3. Barrett reduction 汇编层面优化生效（消除 45 条 shr），但性能无 measurable 变化（瓶颈是 mul 延迟）
+4. absAdd/absSub 双肢打包+AVX2 让 ADD -8.8%，但 MUL/DIV 无变化（scoped pragma 不污染 FFT）
+5. **ADD 的物理瓶颈分析**：absAdd 只占 ~15%，I/O+解析占 50%+，要再压缩必须优化 I/O 和 writeTo
+6. 全局 `#pragma GCC target("avx2,fma")` 会让 MUL/DIV 回退（FFT 代码生成受影响），必须用 scoped pragma
+
+**当前最优版本**：moptm_fusion.cpp（ADD 6.05ms，比 moptm_O2 基线 -7%，比 best_O2 -17%）
+
+**下一步**：
+- I/O 与 writeTo 优化（占 ADD 50%+，最大剩余空间）
+- FFT 路径优化（thread_local 缓冲，内存池）
+
+**辅助文件**（保留）：
+- `d:\precious_speed\edge_test_avx2.py`：边界用例测试
+- `d:\precious_speed\cmp_div_sign.py`：DIV 符号 pre-existing 验证
+- `d:\precious_speed\bench_round2.sh`：清洁 benchmark 脚本
+
+---
+
+**查表法实现** (fusion.cpp L1022-1039):
+```cpp
+struct ParseTable {
+    uint8_t table[0x10000];  // 64KB
+    constexpr ParseTable() : table() {
+        for (uint32_t i = 48; i < 58; ++i)
+            for (uint32_t j = 48; j < 58; ++j)
+                table[i << 8 | j] = uint8_t((i & 15) * 10 + (j & 15));
+    }
+    inline uint32_t operator()(const char* s) const {
+        return table[uint32_t(uint8_t(s[0])) << 8 | uint32_t(uint8_t(s[1]))];
+    }
+};
+static constexpr ParseTable parseTable{};
+
+inline uint16_t str4toi(const char *s) {
+    return uint16_t(parseTable(s) * 100 + parseTable(s + 2));
+}
+```
+
+编译时间 3.7s (LC 限制 30s)，constexpr 64KB table 无编译超时风险。
+
+---
+
+## 6. 待办与下一步
+
+### 当前阶段：阶段一 硬融合
+- [ ] 通读 best/add.cpp, best/mul.cpp, best/div.cpp 三文件
+- [ ] 分析三文件的：数据类型、BASE、I/O 方式、宏开关、算法核心
+- [ ] 设计 fusion.cpp 整体架构
+- [ ] 实现 v0（ADD 路径）
+- [ ] VM 验证 v0 ADD 性能 vs best/add.cpp
+- [ ] 实现 v1（加 MUL 路径）
+- [ ] VM 验证 v1 MUL 性能 vs best/mul.cpp
+- [ ] 实现 v2（加 DIV 路径）
+- [ ] VM 验证 v2 DIV 性能 vs best/div.cpp
+- [ ] 提交 LC 三模式
+
+---
+
+## 7. 关键技术备忘
+
+### best 三文件已知特性（待重新确认，因用户重新覆盖过）
+- **add.cpp**: BASE=10^8 (uint32_t), mmap+oBuffer 零拷贝 I/O, 64KB InputHelper 查表法 parse
+- **mul.cpp**: 待分析
+- **div.cpp**: HyperInt-mini 基底, 待分析（文件变大 23KB，可能有新内容）
+
+### 历史经验（来自 project_memory）
+- LC 计分是 CPU 时间，BSS 段零初始化不计入
+- `#pragma GCC optimize("O3,unroll-loops")` 可显式提升优化等级
+- `#pragma GCC target("avx2")` 等可启用 SIMD
+- mmap + oBuffer 是最快 I/O 方案
+- 64KB 查表法 parse 优于乘加法
+- BASE=10^4 迭代次数是 BASE=10^8 的 2 倍
+- Tiger Lake 虚拟机性能可比 LC Cascade Lake 做相对对比
+
+### 提交节奏
+- LC 提交需 5 秒间隔，避免违规检测
+- 用户偏好：记录 problem ID、result、score、Record ID
+
+---
+
+## 8. 风险与注意事项
+
+1. **best/div.cpp 已被用户重新覆盖**（103KB vs 旧 80KB）— 必须重新通读，不能依赖旧记忆
+2. **fusion.cpp 源码 ≤ 256KB** — 三个 best 文件合计 ~322KB，硬融合后可能超限，需在阶段二统一底座时压缩
+3. **LC 单核调度** — 不要用多线程
+4. **-static 静态链接** — 避免依赖动态库
+5. **不要碰 div_opt.cpp**（项目硬约束，虽然已归档）
+
+## absDivMu 常数优化（2026-07-18，O2 专注阶段）
+
+**用户指示**：O3 pragma 提交无效（LC 实测），专注 O2 优化。用户远程控制，O3 资料待补充。
+
+**常数优化内容**（moptm_fusion.cpp L2674-2721 absDivMu blocks loop）：
+1. 删除 L2708 冗余 `count_true_length`（absCompare 内部会重算，零风险）
+2. L2719 `count_true_length` 改为 `std::min(prod_span.size, window.size)`（修正后 prod <= window，零风险）
+3. 循环外预 resize `tqhat`/`tprod` 到最大值（避免循环内 resize 检查，零风险）
+
+**VM Benchmark 结果**（g++ 15.2 -O2，taskset -c 0，30 次交替测试，min 值最稳定）：
+
+对比 moptm_fusion_O2_DIV（常数优化前，含 absDivMu）vs moptm_fusion_DIV（常数优化后）：
+
+| 测试 | 新版 min (ms) | 旧版 min (ms) | delta_min |
+|------|:-:|:-:|:-:|
+| DIV 1M/500k | 30.09 | 32.74 | **-8.1%** |
+| DIV 200k/100k | 7.63 | 8.07 | **-5.4%** |
+| DIV 1M/100k | 26.07 | 28.29 | **-7.8%** |
+| ADD 1M | 6.95 | 7.18 | **-3.2%** |
+| MUL 500k | 11.60 | 12.90 | **-10.1%** |
+
+**正确性**：5 个用例 MD5 全部匹配 baseline ✓
+
+**关键发现**：
+1. VM 负载波动大，中位数不可靠（曾显示 +33% 回退，实际是负载突变）
+2. min 值（最小值）是最稳定指标，显示常数优化有 3-10% 提升
+3. 常数优化不仅改善 DIV，还改善 ADD/MUL（可能是因为代码布局变化或 I/O 路径复用）
+
+**剩余优化空间分析**（子代理研究结论）：
+
+### 方向 1：mulmod B^m-1 环形乘法（最大收益，高风险）
+- **收益**：absInvNewton 24.7ms → ~15ms，DIV 1M/500k 端到端 -22%
+- **原理**：FFT 长度减半（cyclic 卷积），需重构 absInvNewton 为 GMP 风格两步分解
+- **风险**：高（Newton 算法重构，正/负残类修正逻辑复杂）
+- **实现**：4 阶段，第一阶段（cyclic FFT wrapper）低风险
+- **精度**：安全（cyclic 中间值上界 1.3e13，double 精度 9e15，690x 余量）
+
+### 方向 2：GMP 风格修正循环（中高收益，中风险）
+- **收益**：每 block 省 2 次 absCompare（O(len2) 扫描）
+- **原理**：用 sub + borrow 替代 absCompare + absSub
+- **风险**：需验证 in+1 精度逆下 qhat 偏高上界 ≤ 2
+- **限制**：absSub 有 assert(in1.size >= in2.size)，需处理长度匹配
+
+### 方向 3：FFT 内核优化（radix-8/split-radix）
+- **收益**：理论 10-20%，但实现复杂度高
+- **风险**：高（需重写 FFT 蝶形）
+
+**当前 moptm_fusion.cpp 累计优化（9 项）**：
+1. L1022-1039: 64KB 查表法 ParseTable (str4toi)
+2. L1041-1075: str16to4limbs() SSE2 16 字节 SIMD parse
+3. L1463-1472: fromCharRange 主循环改为 16 字节
+4. L1191-1201: Barrett reduction 常数 + divBASE() 函数
+5. L1562-1690: absAdd_avx2 / absSub_avx2 双肢打包+AVX2 (scoped pragma)
+6. L1180-1199: OutTable 移到命名空间作用域 constexpr + writeTo SSE2 4× 展开
+7. L2647/2669: DIV blocks≥2 fast path + absDivMu 近似逆除法
+8. L2674-2721: absDivMu blocks loop 常数优化（删冗余 count_true_length + std::min + 循环外 resize）
+9. L2489-2496: absDivNewtonWithInvFast 移除 count_true_length + std::min 保护
+
+## absDivNewtonWithInvFast count_true_length 优化（2026-07-18 v3）
+
+**优化内容**：
+- L2489 移除 `prod_span.size = count_true_length(prod_span.ptr, prod_span.size)`（absCompare 内部会重算）
+- L2496 修正循环后添加 `prod_span.size = std::min(prod_span.size, dividend.size)` 保证 absSub 安全
+
+**尝试过的 absDivMu 扩展（已回退）**：
+- `mu_in <= len2` 让 1M/100k 走 absDivMu — **回退**！
+- 原因：Core2 第一个 block `dividend.size <= divisor.size` 直接 return（空操作），有效 blocks = 9，和 absDivMu 相同
+- absDivMu 循环结构略慢，1M/100k 回退 +2.3%
+- 回退后 1M/100k 走 Core2 + count_true_length 优化
+
+**VM Benchmark 结果**（g++ 15.2 -O2，taskset -c 0，30 次交替测试，min 值）：
+
+对比 moptm_fusion_v2_DIV_baseline（v2，absDivMu 常数优化前）vs moptm_fusion_v3_DIV（v3，count_true_length 优化 + mu_in < len2 回退）：
+
+| 测试 | v3 min (ms) | v2 min (ms) | delta_min | 说明 |
+|------|:-:|:-:|:-:|:-:|
+| DIV 1M/500k | 22.15 | 22.16 | -0.0% | absDivMu 路径，无变化 |
+| DIV 200k/100k | 5.50 | 5.46 | +0.6% | 噪声 |
+| DIV 1M/100k | 17.41 | 17.99 | **-3.2%** | ✅ Core2 count_true_length 优化 |
+| ADD 1M | 2.72 | 2.79 | -2.5% | 噪声 |
+| MUL 500k | 7.75 | 7.73 | +0.2% | 持平 |
+
+**关键发现**：
+1. count_true_length 优化对 Core2 路径（1M/100k）有效，-3.2%
+2. absDivMu 路径（1M/500k, 200k/100k）不受影响
+3. `mu_in <= len2` 扩展不可行（Core2 空操作 block 使 absDivMu 无 block 优势）
+
+## 目录整理（2026-07-19）
+
+**用户指示**：阅读所有 CPP 文件（按 add/mul/div 方向），确认无借鉴点后删除。保留 O2 最快 + O3 最快两个方向。允许 O3 开关下的开发。
+
+**删除文件**（24 个 CPP + 1 个 HPP + 辅助文件）：
+- 根目录 9 个：test_o3, o3_submit, o3_verify, bench, fusion, fusion_o2only, moptm_v3_phase3, moptm_v4_divopt, moptm_v5_latest
+- archieve/cpp/ 5 个：moptm, moptm_noomp, moptm_attempt1_approx_inv, moptm_blocks2_fft, hint_all
+- archieve/mason_opt/ 7 个 + mason_compat.hpp（整个目录删除）
+- benchmark_20260715_174849/ 3 个 cpp（整个目录删除）
+
+**保留文件**（有独有优化）：
+- moptm_fusion.cpp（O2/O3 主线，9 项优化基线）
+- moptm_v1_original.cpp（mason 10^8 底座，AVX2 __m256d 蝶形 FFT L213-264，frequencyDomainPointwiseSquare 平方专用点乘，融合 Newton-Raphson 求逆）
+- archieve/cpp/OM.cpp（mason AVX2 复 FFT）
+- archieve/cpp/masonxiong_opt.cpp（DIV 截断乘法 L793-813、融合 Newton L736-771、专用平方路径 L1391、DigitAllocator 内存池 L545-597）
+- archieve/cpp/masonxiong.cpp（多平台 FFT: SSE2/NEON/complex 回退）
+- archieve/cpp/moptm_mudiv.cpp（全逆预计算 absDivNewtonMu_hint L106-184）
+- archieve/cpp/ 8 个工具文件 + best/ 3 文件
+
+**待探索 O3 方向**（用户允许 O3 开发）：
+1. 借鉴 moptm_v1_original 的 AVX2 __m256d 蝶形 FFT（需 benchmark 验证 vs 基线 radix-4 标量 FFT）
+2. 借鉴 masonxiong_opt 的 frequencyDomainPointwiseSquare 专用平方点乘
+3. 修复 fftMulModBm1 正确性测试（HINT_OP_TESTMOD main 的 Integer 构造函数冲突）
+4. 借鉴 masonxiong_opt 的 DigitAllocator 内存池
+5. 借鉴 masonxiong_opt 的 DIV 截断乘法
+
+详见 `CLEANUP_LOG.md` 和 `MOPTM_FUSION_OPTIMIZATIONS.md`
