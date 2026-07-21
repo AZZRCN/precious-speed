@@ -3230,14 +3230,9 @@ namespace hint
             }
             else
             {
-#ifdef USE_GMP_NEWTON
-                {
-                    View D = divisor + (len2 - in);
-                    absInvNewtonGMP(D, inv_span);
-                }
-#else
-                absInvNewton(divisor + (len2 - in), inv_span);
-#endif
+                // GMP 风格 Newton 逆 (默认启用): 1M/500k 实测 17.68ms vs absInvNewton 18.88ms (-6.3%)
+                // CYCLIC_MIN_K=4096 阈值保证; k<4096 时 absInvNewtonGMP 内部回退到 absInvNewton 逻辑
+                absInvNewtonGMP(divisor + (len2 - in), inv_span);
 #ifndef DISABLE_2NXN_CYCLIC
                 prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
 #else
