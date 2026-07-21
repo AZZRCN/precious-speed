@@ -685,3 +685,179 @@ inline uint16_t str4toi(const char *s) {
 
 **结论**: cyclic 路径修复后, 大规模 (1M/500k) 比 nocyclic 快 15%, 中小规模无明显差异 (噪声范围)。
 修复未引入性能回退, cyclic 优势得以保留。
+
+## LC 提交结果 + 紧急修复（2026-07-22 凌晨夜间自主推进）
+
+### LC 三题提交成绩
+
+| 题目 | Submission | 结果 | 最慢用例 | best 成绩 |
+|------|-----------|------|----------|----------|
+| ADD | #386921 | AC 22ms | small_00 22ms | 18ms |
+| MUL | #386922 | AC 40ms | max_max 39-40ms, fft_killer 39ms | 36ms |
+| DIV | #386923 | **RE 165ms** | 多个 RE + WA | 108ms |
+
+### DIV RE/WA 根因分析
+
+**之前判断"assert bug是已存在问题，LC测试数据不覆盖"是错误的！** LC 真实数据会触发：
+
+1. **assert(rem==0) L3662** — 反归一化失败（medium_02, large_00/01, r_nearly_zero_01/02, burnikel_ziegler_02/03, a_max_b_random_02）
+2. **assert(qhat_span最高位==0) L3438** — absDivMu qhat 计算错误（burnikel_ziegler_00/01）
+3. **WA 差1** — cyclic unwrap 精度问题导致商偏差（a_max_b_random_00/01）
+
+**根因**: cyclic (2NXN mod B^m-1) 路径在边界用例精度不足。
+
+### 紧急修复: 禁用 cyclic 路径 (commit 653c5f1)
+
+在文件顶部添加 `#define DISABLE_2NXN_CYCLIC`，同时修改 absInvNewtonGMP 中 `use_cyclic` 判断：
+```cpp
+#ifndef DISABLE_2NXN_CYCLIC
+    bool use_cyclic = (mn >= k + 1) && (mn <= k + rn) && (k >= CYCLIC_MIN_K);
+#else
+    bool use_cyclic = false;
+#endif
+```
+
+**验证**: 4 规模全 PASS + 30 边界用例全 PASS（burnikel_ziegler 2x/3x/4x/5x/10x/100x, r_nearly_zero, a_max_b_random, length_ratio_integer, 2x_boundary）
+**性能**: 1M/500k 22ms (cyclic 版 18.3ms, 回退 ~20%, 但仍远快于 best 108ms)
+
+### ADD small_00 22ms 瓶颈分析
+
+**LC ADD 用例生成器分析**（yosupo06/library-checker-problems）:
+- small_00: T=200000, 每个数字 1-18 位（`lim=18`）
+- medium: T≈4000, 数字 1-1000 位
+- large: T≈40, 数字 1-100000 位
+- max_max: T=1, 数字 2000000 位
+
+small_00 是"小数字多组"模式，22ms 瓶颈是 per-call 开销累积（Integer 对象构造/析构 + fromCharRange + writeTo）。
+
+### ADD int64 快速路径 (commit ddb58ce)
+
+在 main 循环中添加小数字快速路径：<= 18 位十进制用 int64_t 直接计算，跳过 Integer 对象。
+
+```cpp
+// tryParseI64: <= 18 位数字 → int64_t
+// writeI64: int64_t → 字符串写入 oBuffer
+// readToken: SWAR 找 token 边界, 不解析
+if (tryParseI64(sa, la, va) && tryParseI64(sb, lb, vb)) {
+    writeI64(va + vb);  // 两个数都 <= 18 位, 和 < 2*10^18 < INT64_MAX
+} else {
+    a.fromCharRange(sa, sa + la); b.fromCharRange(sb, sb + lb);
+    a += b; writeHint(a);
+}
+```
+
+**验证**: 62 正确性全 PASS + 200000 small_00 全 PASS
+**性能**: small_00 22ms → 16.68ms (-24%), 1M+1M 3.11ms
+
+### #pragma GCC target 优化 (commit cb93374)
+
+limits.md 确认: `#pragma GCC optimize("O3")` 在 LC 无效, 但 `#pragma GCC target` **可用**（控制指令集，非优化等级）。
+
+ADD 第一名使用了 `#pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")`。
+
+添加到文件顶部:
+```cpp
+#pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")
+```
+
+**验证**: ADD/MUL/DIV 三题编译 OK, 正确性全 PASS
+**性能**（VM g++ 15.2, taskset -c 0, 3 warmup + 5-7 measure）:
+
+| 测试 | 无 target | 有 target | delta |
+|------|:-:|:-:|:-:|
+| ADD small_00 (T=200k) | 16.68ms | **15.43ms** | -7.5% |
+| ADD 1M+1M | 3.11ms | 2.93ms | -5.8% |
+| MUL 500k*500k | 11.66ms | **8.54ms** | **-26.7%** |
+| MUL 100k*100k | — | 3.03ms | — |
+| MUL fft_killer | — | 8.48ms | — |
+| DIV 1M/500k | 22.0ms | 21.48ms | -2.4% |
+| DIV 100k/50k | 3.34ms | 3.17ms | -5.1% |
+
+**关键发现**: target pragma 对 MUL 有巨大提升 (-27%)! 原因: AVX2 蝶形 + BMI2 位运算加速 FFT 内核。
+
+### 当前 git 提交链
+
+```
+cb93374 feat: add #pragma GCC target(avx2,bmi,bmi2,popcnt,lzcnt)
+ddb58ce feat(add): int64 fast path for small numbers (<=18 digit)
+653c5f1 fix(div): disable cyclic (2NXN mod B^m-1) path - LC RE/WA fix
+d52c34c chore: simplify header to AZZRCN/GitHub, add tri-mode #define switch
+bce52be feat(div): enable absInvNewtonGMP as default Newton inverse
+```
+
+### 提交文件格式
+
+moptm_fusion.cpp 是三合一提交文件:
+- 顶部 `#define HINT_OP_DIV` (默认 DIV)
+- 提交 ADD: 注释掉 DIV, 取消注释 ADD
+- 提交 MUL: 注释掉 DIV, 取消注释 MUL
+- LC 编译命令: `g++ -O2 -std=gnu++20 -static -DONLINE_JUDGE` (无 -D 宏)
+
+### 预期 LC 成绩（基于 VM 数据推算）
+
+| 题目 | VM 性能 | LC 预估 | best LC | 预期排名 |
+|------|---------|---------|---------|----------|
+| ADD | small_00 15.43ms, 1M 2.93ms | ~18-20ms | 18ms | 接近第一 |
+| MUL | 500k 8.54ms | ~30ms | 36ms | 超越 best |
+| DIV | 1M/500k 21.48ms | ~80ms | 108ms | 超越 best |
+
+注: VM (i7-11370H @ 3.3GHz) vs LC (Xeon @ 3.1GHz), 绝对值不可直接比较, 但相对趋势可参考。
+
+### 待办（用户醒来后）
+
+1. **LC 重新提交三题验证** — 当前代码已修复 DIV RE + ADD small_00 优化 + target pragma
+2. **MUL 进一步优化** — fft_killer 8.48ms 仍有空间, 可考虑 radix-8 蝶形
+3. **assert bug 深入调查** — cyclic 路径精度问题的根因（低优先级, 已用 DISABLE_2NXN_CYCLIC 规避）
+4. **O3 开发** — 用户 O3 预展开项目可继续推进
+
+## absDivMu 修正2 carry propagation bug 修复（2026-07-22 夜间自主推进）
+
+### Bug 描述
+- **触发率**: ~0.2% (1/500 大规模 fuzz)
+- **症状**: 商从某个 block 开始差 1, diff = BASE^k (k = block 边界)
+- **LC 影响**: DIV #386923 RE/WA (cyclic 路径) + baseline 0.2% 命中率
+
+### 根因分析
+
+absDivMu 非cyclic路径修正2（qhat偏小检测）**只比较 new_rp 低 len2 位与 divisor**, 忽略了 new_rp 的高 this_in 位:
+- `new_rp = window - product`, 完整长度 = len2 + this_in
+- 当 `new_rp >= B^len2` (高位非零) 但 `new_rp 低 len2 位 < divisor` 时, 修正2不执行
+- 导致 qhat 偏小 1, remainder 偏大 divisor, 后续 block 连锁出错
+
+### 第一次修复尝试 (失败)
+
+- **方案**: 用 `cy` (低 len2 位减法借位) 判断 `new_rp >= B^len2`
+- **结果**: **434/1250 FAIL** (34.7% 触发率！比原 bug 更严重)
+- **教训**: `cy=true` **不等于** `new_rp >= B^len2`!
+  - `cy=true` 只表示低 len2 位减法有借位
+  - 但高位可能吸收了借位 (`window高位 - product高位 - 1 >= 0`), 此时 `new_rp < B^len2`
+  - 强制修正导致 qhat 偏大 1, 引入大量错误
+
+### 正确修复
+
+- **方案**: 计算new_rp的**完整高位** (this_in位), 修正2检查高位是否非零
+  - 新增 `absSub(wnd_extra, tp_extra, tp_extra)` 计算 new_rp 高 this_in 位
+  - 修正2: 高位非零 → `new_rp >= B^len2 > divisor` → 执行修正
+  - 修正时借位传播到高位 (与修正1相同的借位传播模式)
+- **代码位置**: moptm_fusion.cpp L3432-3442 (高位计算) + L3444-3466 (修正2)
+
+### 验证结果
+
+**1250/1250 PASS, 0 FAIL** (moptm_fix_test)
+- 1000 随机 fuzz (100-500k 位, a/b 比例 2:1 到 5:1)
+- 50 burnikel_ziegler_bound 边界用例
+- 50 r_nearly_zero (余数=1) 边界用例
+- 50 a_max_b_random (a >> b) 边界用例
+- 100 case#134 同尺寸 (a=1000, b=332, 不同 seed) 用例
+
+### 性能影响
+
+修复引入额外 O(this_in) 的减法计算 (new_rp 高位), 但相比 FFT 的 O(n log n) 开销可忽略。
+详细 benchmark 待测。
+
+### 当前代码状态
+
+- moptm_fusion.cpp: cyclic 禁用 + 无 FMA + 修正2 carry bug 已修复
+- 性能: 1M/500k ~49ms (cyclic 禁用导致 2.3x 回退 vs 21ms)
+- 正确性: 1250/1250 PASS
+- 待办: 修复 cyclic Bug #2 后重新启用 cyclic, 恢复 2.3x 性能

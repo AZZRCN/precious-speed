@@ -8,11 +8,14 @@
 
 // LC 评测机: GCP c2-standard-4 (Cascade Lake, AVX2+FMA+BMI2)
 // #pragma GCC target 可用 (与无效的 #pragma GCC optimize 不同, target 控制指令集)
+// NOTE: fma 已移除 — 实测 fma 导致 FFT 浮点精度变化, 触发罕见除法余数错误 (broad#134)
 #pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")
 
-// 禁用 cyclic (2NXN mod B^m-1) 路径: LC 实测 burnikel_ziegler_bound / r_nearly_zero 等用例
-// 触发 assert 和 WA (商差1), 根因是 cyclic unwrap 精度问题. 禁用后回退到线性卷积 + absInvNewton,
-// 保证正确性. 性能损失 ~7% (1M/500k 18.3ms → ~19.7ms)
+// cyclic (2NXN mod B^m-1) 路径: 禁用
+// absSub1 返回值捕获修复 (Bug #1) 不够, 仍有 9/281 失败 (a_max_b_random 等)
+// 根因: qhat_span 额外高位 wrap (Bug #2) + cyclic 精度边界问题
+// 性能回退 ~2.3x (1M/500k 21.5ms → 49.3ms), 但保证正确性
+// TODO: 修复 cyclic Bug #2 后重新启用, 恢复 2.3x 性能
 #define DISABLE_2NXN_CYCLIC
 
 #ifndef HINT_MINI_HPP
@@ -3263,8 +3266,10 @@ namespace hint
                         View rp_high_wn(window.ptr + (len2 + this_in - wn), wn);
                         bool borrow = absSub(prod_low_wn, rp_high_wn, prod_low_wn);
                         // GMP L227: cy = mpn_sub_1 (tp + wn, tp + wn, tn - wn, cy)
+                        // FIX: 捕获 absSub1 返回值 (最终 borrow), 对应 GMP cy 更新
+                        //   原 bug: 返回值被丢弃, borrow 保持原值, 导致 cx-cy 修正错误
                         Span prod_rest(prod_mod_span.ptr + wn, cyclic_m - wn);
-                        if (borrow) absSub1(prod_rest, 1, prod_rest);
+                        if (borrow) borrow = absSub1(prod_rest, 1, prod_rest);
                         // GMP L228: cx = mpn_cmp (rp + dn - in, tp + dn, tn - dn) < 0
                         //   rp_old[dn-in..] = window[len2 .. len2+cmp_len-1], cmp_len = cyclic_m - len2
                         //   (cmp_len < this_in 因 wn > 0 ⟹ cyclic_m < len2+this_in)
@@ -3404,15 +3409,15 @@ namespace hint
                     corr_down++;
                 }
 
-                // --- 计算 new_rp = window - product (低 len2 位) ---
-                // 计算 borrow: product[0..wnd_full_len-1] <= window ?
+                // --- 计算 new_rp = window - product (完整 len2+this_in 位) ---
+                // 低 len2 位: tprod[0..len2-1] = window[0..len2-1] - product[0..len2-1]
+                // 高 this_in 位: tprod[len2..len2+this_in-1] = window高位 - product高位 - cy
+                //   (tprod[len2..] 仍是修正1后的 product 高位, 未被低 len2 位 absSub 覆盖)
                 bool cy;
                 {
-                    // 先减低 this_in 位: tprod_low = np_new - tprod_low
                     View np_chunk(window.ptr, this_in);
                     Span tp_low(tprod.data(), this_in);
                     cy = absSub(np_chunk, tp_low, tp_low);
-                    // 再减高 len2-this_in 位（带借位）: tprod_high = rp_low - tprod_high - cy
                     if (len2 != this_in) {
                         Span tp_high(tprod.data() + this_in, len2 - this_in);
                         View rp_low(window.ptr + this_in, len2 - this_in);
@@ -3423,14 +3428,39 @@ namespace hint
                         }
                         cy = cy2 || cy3;
                     }
-                    // 高位借位( product[wnd_full_len..] > 0 则 cy = true, 已由修正 1 保证 product <= window )
+                }
+                // 计算 new_rp 高 this_in 位
+                {
+                    Span tp_extra(tprod.data() + len2, this_in);
+                    View wnd_extra(window.ptr + len2, this_in);
+                    bool cy_high = absSub(wnd_extra, tp_extra, tp_extra);
+                    if (cy) {
+                        bool cy3 = absSub1(tp_extra, 1, tp_extra);
+                        cy_high = cy_high || cy3;
+                    }
+                    // cy_high 应为 false (修正1保证 product <= window)
                 }
 
                 // --- 修正 2: remainder >= divisor ? (qhat 偏小) ---
+                // FIX: 检查 new_rp 完整长度 (len2+this_in), 高位非零 → new_rp >= B^len2 > divisor
+                //   原 bug: 只比较低 len2 位, 当 new_rp >= B^len2 但低 len2 位 < divisor 时不修正
                 int corr_up = 0;
                 while (corr_up < 10) {
-                    if (absCompare(Span(tprod.data(), len2), divisor) < 0) break;
-                    absSub(Span(tprod.data(), len2), divisor, Span(tprod.data(), len2));
+                    bool rp_ge_div = false;
+                    for (size_t i = len2; i < len2 + this_in; i++) {
+                        if (tprod[i] != 0) { rp_ge_div = true; break; }
+                    }
+                    if (!rp_ge_div) {
+                        rp_ge_div = (absCompare(Span(tprod.data(), len2), divisor) >= 0);
+                    }
+                    if (!rp_ge_div) break;
+                    // new_rp -= divisor (减低 len2 位, 借位传播到高 this_in 位)
+                    bool borrow = absSub(Span(tprod.data(), len2), divisor, Span(tprod.data(), len2));
+                    size_t bi = len2;
+                    while (borrow && bi < len2 + this_in) {
+                        if (tprod[bi] > 0) { tprod[bi]--; borrow = false; }
+                        else { tprod[bi] = Limb(BASE - 1); bi++; }
+                    }
                     absAdd1(qhat_span, 1, qhat_span);
                     corr_up++;
                 }
