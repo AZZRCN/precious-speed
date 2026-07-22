@@ -3161,6 +3161,14 @@ namespace hint
             //   2*int_ceil2((len2+in)/2+1) >= len2+in+2 > len2+in >= len2+this_in ✓
             // 性能: 大比例(a>>b)时 cyclic_m≈非cyclicFFT/2, 仍保留约2倍FFT提升
             size_t cyclic_m = std::max(int_ceil2(len2 + 1), int_ceil2((len2 + in) / 2 + 1));
+            // FIX: unwrap 近似误差在多块场景(blocks>>1)累积超出 r-based 修正容错
+            // 当 est_blocks>10 时增大 cyclic_m 到 int_ceil2(len2+in+1) > len2+this_in, 消除 unwrap
+            // 安全: cyclic 卷积 = 线性卷积 (2*cyclic_m > conv_len), tprod=精确prod, r-based 修正准确
+            // 性能: FFT 大小≈非cyclic, 但保留 absDivMu 预计算 inv/divisor DFT 复用优势
+            size_t est_blocks = (quotient.size + in - 1) / in;
+            if (est_blocks > 10) {
+                cyclic_m = int_ceil2(len2 + in + 1);
+            }
             if (divisor_dft_mod_buf.size() < cyclic_m) divisor_dft_mod_buf.resize(cyclic_m);
 #endif
 
@@ -3697,7 +3705,11 @@ namespace hint
                     {
                         mu_in = qn_mu;
                     }
-                    if (mu_in < len2)
+                    // in=len2 + cyclic 路径的 r-based 修正在多块场景不可靠
+                    // (divisor[len2]=0 → qhat偏小1时 r 可能=0, FFT精度加剧)
+                    // 限制: mu_in==len2 时仅 est_blocks<=10 走 absDivMu, 否则回退 Core2
+                    bool ab_safe = (mu_in < len2) || ((quot_span.size + mu_in - 1) / mu_in <= 10);
+                    if (mu_in <= len2 && ab_safe)
                     {
                         absDivMu(dividend_span, divisor_span, quot_span, mu_in);
                     }
