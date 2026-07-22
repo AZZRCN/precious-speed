@@ -78,7 +78,7 @@ d:\precious_speed\
 
 ## 4. 虚拟机访问
 
-- **SSH**: `10.144.33.157` (2026-07-21 重启后; GCC 改造已暂停, VM 独占, CPU 数据更稳定)
+- **SSH**: `192.168.1.55` (2026-07-22 重启后; 旧 IP 10.144.33.157 已失效)
 - **用户**: `azzr`
 - **密码**: `1234`
 - **系统**: Ubuntu 7.0.0-28-generic, 2 核
@@ -1357,3 +1357,85 @@ O2 已接近极限：
 1. 100k 的 0.85ms 差距（BASE 结构性劣势，不改 BASE 无法突破）
 2. DIV cyclic Bug #2 已修复，cyclic 重新启用
 3. O3 开发（用户既定"O2 到极限之后再开发 O3"）
+
+## 快读快写跨越性优化（2026-07-22，fast_io.cpp + moptm_fusion 实装）
+
+### 背景
+
+用户指示："尝试开发出跨越性的快读快写。可以尝试使用builtin函数和赋值操作搭建一个O2上理论最快的快读快写类，每一个时钟周期都要榨干。"
+
+### fast_io.cpp 独立 benchmark
+
+开发了独立快读快写 benchmark 文件 `fast_io.cpp`，测试 5 个 parse 版本 × 2 write 版本。
+
+**关键技术**:
+- **SWAR (SIMD Within A Register)**: 64位整数运算并行处理8字节
+- **Daniel Lemire parse technique**: `*2561u`配对组合, `*6553601u`四元组组合
+- **parse4SWAR**: 4字节ASCII数字→uint32, 纯算术无查表
+- **allDigits8 (nibble-based)**: high nibble==3, low nibble<=9 检测
+- **V4 merged check+parse**: 合并SWAR digit check和parse4SWAR, 复用已加载的`low` nibbles, 消除冗余memcpy
+- **madvise**: MADV_SEQUENTIAL|WILLNEED (input), MADV_HUGEPAGE (output buffer)
+
+**allDigits8 hex literal bug 修复**:
+- `0xF0F0F0F0F0F0F0FULL`（15位hex）→ `0xF0F0F0F0F0F0F0F0ULL`（16位hex）
+- 3处hex常量修复后所有版本PASS
+
+**Benchmark 结果 (VM, ADD small_00, T=200000, 30 runs min, ms)**:
+```
+best_add             13.731     (base)
+fast_io_p4w1          8.582     -37.5%  ⭐ 最快
+fast_io_p1w1          8.696     -36.7%
+fast_io_p4w2          8.678     -36.8%
+fast_io_p1w2          8.747     -36.3%
+```
+
+V4W1+madvise 为最优版本，比 best 快 37.5%。
+
+### moptm_fusion.cpp 实装
+
+将 fast_io.cpp 的最优优化实装到 moptm_fusion.cpp:
+
+**1. V4 merged check+parse (parsePositiveUntilNondigit, L4294-4310)**
+- 将 `parse4SWAR(s + i)` 替换为内联计算，复用已加载的 `low` nibbles
+- 消除 parse4SWAR 内部的冗余 memcpy
+
+**2. oBuffer mmap + MADV_HUGEPAGE (L4101-4110, L4146-4156)**
+- `static char oBuffer[N]` → `static char* oBuffer` + mmap 分配
+- `MADV_HUGEPAGE` 减少 32MB DIV output buffer 的 TLB miss
+- 保留 `oBufferFallback` static 数组作为 mmap 失败 fallback
+
+**3. Input mmap + MADV_SEQUENTIAL|WILLNEED (L4157-4162, 已有)**
+- 前session已添加，本次确认保留
+
+### 正确性验证
+
+- 200 fuzz cases × 3 modes (ADD/MUL/DIV) = 600 cases 全部 PASS
+- 与 best/add.cpp, best/mul.cpp, best/div.cpp 输出 MD5 一致
+
+### Benchmark 结果 (VM, 15 runs min, ms)
+
+| Test | moptm | best | diff |
+|------|:-:|:-:|:-:|
+| ADD_1M | 2.981 | 2.936 | +1.5% (接近持平) |
+| ADD_100k | 1.202 | 0.987 | +21.8% (BASE=10^4 小数据劣势) |
+| MUL_500k | 8.076 | 7.324 | +10.3% (FFT 算法瓶颈) |
+| MUL_100k | 2.416 | 2.258 | +7.0% |
+| DIV_1M_500k | 17.405 | 27.528 | **-36.8%** |
+| DIV_200k_100k | 4.606 | 6.703 | **-31.3%** |
+
+### O2 版其他优化点检查
+
+- **tryParseI64/tryParseI64Unchecked**: fallback 路径, 非热路径, 优化收益小
+- **parseI64Positive**: 死代码 (无调用)
+- **writeI64 Barrett reduction**: 之前测试无收益 (除法次数少, 非 bottleneck)
+- **Integer::writeTo**: 已 AVX2 8× unrolled
+- **fromCharRange**: 已用 str16to4limbs SSE2 16字节主循环
+- **MUL 瓶颈**: FFT 乘法 (carry chain serial dependency), 非 I/O
+
+### 结论
+
+O2 版 I/O 优化已接近极限:
+- DIV 大幅领先 best (-36.8%), oBuffer mmap+MADV_HUGEPAGE 对 32MB buffer 效果显著
+- ADD 1M 接近持平 (+1.5%), 小数据有 BASE=10^4 结构性劣势
+- MUL 瓶颈在 FFT 算法, I/O 优化帮助有限
+- 剩余优化空间在算法层面 (MUL 的 carry chain, DIV 的 absInvNewton)
