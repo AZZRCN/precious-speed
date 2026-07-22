@@ -519,7 +519,7 @@ namespace hint
                 {
                     return &table[rank * 2 / DIV];
                 }
-                std::vector<Float> table;
+                AlignedVec32<Float> table;  // 32-byte aligned for AVX2 aligned load/store
                 int factor;
             };
 
@@ -549,10 +549,10 @@ namespace hint
                     expand(float_len);
                     const size_t fft_len = float_len / 2, c2_len = fft_len / 2;
                     const size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
-                    // FFT buffers use AlignedVec32 (posix_memalign 32), hint compiler for AVX2
-                    auto tp1 = reinterpret_cast<const C2 *>(table1.getBegin(fft_len));
-                    auto tp3 = reinterpret_cast<const C2 *>(table3.getBegin(fft_len));
-                    auto it = reinterpret_cast<C2 *>(inout);
+                    // FFT buffers + twiddle tables: AlignedVec32 (posix_memalign 32), hint for AVX2
+                    auto tp1 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table1.getBegin(fft_len), 32));
+                    auto tp3 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                    auto it = reinterpret_cast<C2 *>(__builtin_assume_aligned(inout, 32));
                     for (auto end = it + stride1; it < end; it++, tp1++, tp3++)
                     {
                         // __builtin_prefetch: overlap next iteration's twiddle factor fetch
@@ -588,10 +588,10 @@ namespace hint
                     idit<false>(inout + stride * 3, stride);
                     const size_t fft_len = float_len / 2, c2_len = fft_len / 2;
                     const size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
-                    // FFT buffers use AlignedVec32 (posix_memalign 32), hint compiler for AVX2
-                    auto tp1 = reinterpret_cast<const C2 *>(table1.getBegin(fft_len));
-                    auto tp3 = reinterpret_cast<const C2 *>(table3.getBegin(fft_len));
-                    auto it = reinterpret_cast<C2 *>(inout);
+                    // FFT buffers + twiddle tables: AlignedVec32 (posix_memalign 32), hint for AVX2
+                    auto tp1 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table1.getBegin(fft_len), 32));
+                    auto tp3 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                    auto it = reinterpret_cast<C2 *>(__builtin_assume_aligned(inout, 32));
                     for (auto end = it + stride1; it < end; it++, tp1++, tp3++)
                     {
                         // __builtin_prefetch: overlap next iteration's twiddle factor fetch
@@ -4095,6 +4095,12 @@ namespace {
     static const char *iCursor = iBuffer, *iEnd = iBuffer;
 
     static void initInput() {
+        // FTZ + DAZ: 防止 FFT 蝶形产生 denormal 浮点数 (x86 处理 denormal 慢 20-50x)
+        // FTZ (Flush-To-Zero): 输出 denormal → 0; DAZ (Denormals-Are-Zero): 输入 denormal → 0
+        // 安全性: FFT 输入 uint16→double (0~9999), twiddle cos/sin ([-1,1]) 均非 denormal;
+        //         denormal 只在蝶形相近值相减时出现, 此时值已极小, 对结果贡献可忽略 (FFTW 默认启用)
+        _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+        _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
 #ifdef __linux__
         struct stat status;
         if (fstat(STDIN_FILENO, &status) == 0 && status.st_size > 0) {

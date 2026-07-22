@@ -1,0 +1,11 @@
+opt(mul): FTZ/DAZ + AlignedVec32 twiddle table + assume_aligned
+
+- initInput(): set MXCSR FTZ+DAZ to prevent denormal floats in FFT
+- FFTTable::table: std::vector<Float> -> AlignedVec32<Float> (32-byte aligned)
+- dif/idit: add __builtin_assume_aligned(ptr, 32) for tp1/tp3/it pointers
+  enables aligned AVX2 load/store instead of unaligned
+- 2130/2130 PASS (ADD 730, MUL 750, DIV 650)
+- MUL perf (VM, 30-run min, vs FTZ/DAZ baseline):
+  1M  -3.5% (16.47 -> 15.90ms)
+  500k -7.1% (8.09 -> 7.52ms)
+  300k -10.6% (7.84 -> 7.01ms)

@@ -944,10 +944,58 @@ moptm_fusion.cpp 是三合一提交文件:
 | 题目 | VM 性能 | LC 预估 | best LC | 预期排名 |
 |------|---------|---------|---------|----------|
 | ADD | small_00 15.43ms, 1M 2.93ms | ~18-20ms | 18ms | 接近第一 |
-| MUL | 500k 8.54ms | ~30ms | 36ms | 超越 best |
-| DIV | 1M/500k 21.48ms | ~80ms | 108ms | 超越 best |
 
-注: VM (i7-11370H @ 3.3GHz) vs LC (Xeon @ 3.1GHz), 绝对值不可直接比较, 但相对趋势可参考。
+## FTZ/DAZ + AlignedVec32 twiddle table + assume_aligned (2026-07-22)
+
+**背景**: BENCH_INTERNAL profile 显示 MUL 占总时间 83%@1M，FFT 是绝对瓶颈。butterfly 循环已 AVX2 向量化，但 twiddle factor table (`FFTTable::table`) 仍是普通 `std::vector<Float>`，且 dif/idit 中 reinterpret_cast 未告诉编译器数据对齐。
+
+**两项优化**:
+
+### 1. FTZ/DAZ (MXCSR) — 防御性优化
+- 在 `initInput()` 开头设置 `_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON)` + `_MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON)`
+- 防止 FFT 蝶形相近值相减产生 denormal 浮点 (x86 处理 denormal 慢 20-50x)
+- **性能影响**: 在误差范围内 (1M: 16.47 vs 16.50 baseline)，说明当前 FFT 数据未产生 denormal
+- 保留作为零成本防御性优化 (FFTW 默认也启用)
+
+### 2. AlignedVec32 twiddle table + `__builtin_assume_aligned`
+- `FFTTable::table`: `std::vector<Float>` → `AlignedVec32<Float>` (32 字节对齐)
+- dif/idit 中三个指针 (`tp1`, `tp3`, `it`) 添加 `__builtin_assume_aligned(ptr, 32)`
+- 让编译器使用 `_mm256_load_pd`/`_mm256_store_pd` (aligned) 替代 `_mm256_loadu_pd`/`_mm256_storeu_pd` (unaligned)
+
+**性能** (VM g++ 15.2 -O2, file redirection, 30-run min, vs FTZ/DAZ baseline):
+
+| Size | baseline | now | delta |
+|------|:-:|:-:|:-:|
+| 1M | 16.471 | 15.896 | **-3.5%** |
+| 500k | 8.088 | 7.516 | **-7.1%** |
+| 300k | 7.836 | 7.008 | **-10.6%** |
+| 100k | 2.539 | 2.435 | -4.1% |
+| 10k | 0.848 | 0.854 | +0.7% |
+
+**vs best/mul.cpp** (同 VM, 30-run min):
+| Size | moptm | best | diff |
+|------|:-:|:-:|:-:|
+| 1M | 15.896 | 14.248 | +1.648 (落后 11.6%) |
+| 500k | 7.516 | 6.887 | +0.629 (落后 9.1%) |
+| 300k | 7.008 | 6.366 | +0.642 (落后 10.1%) |
+| 100k | 2.435 | 2.066 | +0.368 (落后 17.8%) |
+| 10k | 0.854 | 0.909 | -0.054 (领先 6.0%) |
+
+**正确性**: ADD 730/730, MUL 750/750, DIV 650/650 — **2130/2130 ALL PASS**
+
+**关键发现**:
+- twiddle table 对齐 + assume_aligned 对中大 size (300k-1M) 有 -3.5%~-10.6% 收益
+- VM 上 moptm 仍落后 best ~10-12% (1M: 15.9 vs 14.2ms)，但 VM ≠ LC (之前 HANDBOOK 记录 LC 上 moptm 领先 best 22%)
+- 小数据 (10k) 无收益，因 FFT 规模小，twiddle table 在 L1 cache 内
+
+### 当前 git 提交链
+
+```
+199528f opt(mul): builtin functions - clz/ctz/prefetch/assume, 2130/2130 PASS, 1M 17.6->16.5ms
+4e61f37 docs: record 32-byte aligned FFT buffers + file redirection benchmark in HANDBOOK
+358b2f4 opt(mul): 32-byte aligned FFT buffers via posix_memalign
+d589fef opt(mul): flushOutput write() syscall + writeTo scalar store
+```
 
 ### 待办（用户醒来后）
 
