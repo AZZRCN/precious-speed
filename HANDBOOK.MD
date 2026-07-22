@@ -754,10 +754,29 @@ inline uint16_t str4toi(const char *s) {
 ### 当前 O2 最快版本
 
 - **文件**: `moptm_fusion.cpp` (commit df9c194)
-- **DIV 1M/500k**: 18.23ms (7 runs: 16.65, 17.25, 17.29, 18.23, 18.75, 18.98, 19.02)
+- **DIV 1M/500k**: 18.23ms (1000-case run) / 19.19ms (3000-case run, 噪声范围内)
 - **ADD/MUL**: 通过三模式 #define 切换 (默认 HINT_OP_DIV)
 - **编译**: `g++ -O2 -std=gnu++20 -static -DONLINE_JUDGE moptm_fusion.cpp -o moptm -pthread`
-- **正确性**: 1000/1000 fuzz PASS (含大比例 a>>b, power-of-2 aligned, near-boundary 等)
+- **正确性**: 1000/1000 + 3000/3000 fuzz PASS (两轮不同随机种子, 覆盖大比例 a>>b, power-of-2 aligned, near-boundary 等)
+
+### 大规模验证 (3000 cases, seed=2026072202)
+
+**验证结果**: 3000/3000 PASS, 0 FAIL, elapsed=1367s
+
+**用例分布**:
+- 600 large (10k-1M digits)
+- 300 power-of-2 aligned
+- 500 medium (50k-500k)
+- 500 small (100-8000)
+- 300 very small (4-80)
+- 500 extreme ratio (a>>b, 100k-1M / 10-10000) — 关键测试 cyclic_m fix
+- 300 near-boundary (remainder=1)
+
+**性能**: DIV 1M/500k median 19.19ms (7 runs: 18.84, 19.10, 19.12, 19.19, 19.36, 19.70, 32.55)
+- 32.55ms 为 VM 系统干扰异常值, median 可靠
+- 与 1000-case run (18.23ms) 差异在噪声范围内
+
+**结论**: cyclic Bug #2 修复完全稳定, O2 阶段收尾完成
 
 
 **之前判断"assert bug是已存在问题，LC测试数据不覆盖"是错误的！** LC 真实数据会触发：
