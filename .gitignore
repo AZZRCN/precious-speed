@@ -25,3 +25,22 @@ desktop.ini
 # 临时大文件 / 临时大文件
 *.tmp
 *.bak
+
+# 隐私文件 / Privacy (含 VM 凭据，禁止提交)
+ssh_manager.py
+scripts/
+!scripts/.gitkeep
+
+# 无关项目探索记录 / Unrelated project exploration
+exploration/
+
+# 临时日志和记录 / Temp logs and notes
+2026年*.md
+*.log
+moptm_vec.log
+
+# Winbench 大数据文件 / Large test data
+winbench/*.in
+
+# 临时目录 / Temp directories
+temp/

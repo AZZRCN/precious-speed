@@ -16,14 +16,13 @@
 
 在 LC (Library Checker, judge.yosupo.jp) 真实评测约束下，让单一文件在 ADD/MUL/DIV 三个问题上同时达到或超越 `best/` 目录下三个独立文件的成绩。
 
-### LC 评测环境（详见 limits.md）
-- 编译：`g++ -x c++ -O2 -std=gnu++20 -static -ONLINE_JUDGE`
-- **无 -mavx2**（默认不启用高级指令集，需 `#pragma GCC target` 显式开启）
-- 硬件：GCP c2-standard-4, Intel Cascade Lake, AVX2+FMA+AVX-512
+### LC 评测环境（详见 limits.md，2026-07-23 用 langs.toml 一手数据查证）
+- 编译：`g++ -O2 -std=c++23 -DEVAL -DONLINE_JUDGE -march=native -o main main.cpp -I /opt/ac-library`
+- **GCC 15.2**（不是 11.4！），**有 -march=native**（自动启用 AVX2/FMA/BMI2/AVX-512）
+- 硬件：GCP c2d-highcpu-8, **AMD EPYC 7B13 (Milan/Zen3)**, 1 core, 1 GiB 内存, 栈 Unlimited
 - 计分：CPU 时间（用户态+内核态总和），非墙钟时间
-- 内存：2GB
-- 单核调度（多线程无加速收益）
-- 源码 ≤ 256KB，编译 ≤ 30s
+- 源码 ≤ 256KB
+- **无 -static**（旧文档错误），**无 -Wall**
 
 ### 三题地址
 - ADD: https://judge.yosupo.jp/problem/addition_of_big_integers

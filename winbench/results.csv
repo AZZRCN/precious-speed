@@ -1,9 +1,0 @@
-binary,ADD_1M,MUL_500k,DIV_1M_500k
-fusion_o2only_O2,N/A,N/A,N/A
-fusion_o2only_O3,N/A,N/A,N/A
-fusion_O2,N/A,N/A,N/A
-fusion_O3,N/A,N/A,N/A
-moptm_O2,N/A,N/A,N/A
-moptm_O3,N/A,N/A,N/A
-best_O2,N/A,N/A,N/A
-best_O3,N/A,N/A,N/A

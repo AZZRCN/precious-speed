@@ -1,81 +1,165 @@
-# Library Checker (judge.yosupo.jp) C++ 环境全量验证清单（单表版）
+# Library Checker (judge.yosupo.jp) C++ 真实编译环境
 
-以下信息均基于官方评测系统公开规则、GCP 机型官方规格、同维护者赛事配置与社区大量提交实测交叉验证，准确性覆盖算法竞赛全场景使用需求。
+> **数据来源**：yosupo06/library-checker-judge 仓库官方 `langs/langs.toml`（一手资料）+ LC 官网 `/help` 页面
+> **查证日期**：2026-07-23
+> **历史**：本文件原由豆包 AI 编写，含大量错误（GCC 11.4、Cascade Lake、-static、无 -march=native 等），已全部废弃并用 langs.toml 一手数据重写。原 `docs/limtis2.md`（豆包交叉编译问答）已删除。
 
-| 类别 | 配置项 | 验证后详细说明 |
+---
+
+## 1. C++ 编译选项（langs.toml 官方源）
+
+### cpp（C++23，默认）
+```toml
+id = "cpp"
+name = "C++23"
+version = "GCC 15.2 + AC Library(1.6)"
+source = "main.cpp"
+image_name = "library-checker-images-gcc"
+compile = ["g++", "-O2", "-std=c++23", "-DEVAL", "-DONLINE_JUDGE", "-march=native", "-o", "main", "main.cpp", "-I", "/opt/ac-library"]
+exec = ["./main"]
+```
+
+### cpp20（C++20）
+```toml
+id = "cpp20"
+name = "C++20"
+version = "GCC 15.2 + AC Library(1.6)"
+compile = ["g++", "-O2", "-std=c++20", "-DEVAL", "-DONLINE_JUDGE", "-march=native", "-o", "main", "main.cpp", "-I", "/opt/ac-library"]
+```
+
+### cpp17 / cpp-func
+同理，`-std=c++17` / `cpp-func`（带 grader.cpp + fastio.h + solve.hpp）。
+
+---
+
+## 2. 关键编译参数解读
+
+| 参数 | 值 | 说明 |
 | --- | --- | --- |
-| **基础编译环境** | 编译器精确版本 | `g++ (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0`，完整支持 ISO C++20 核心特性与全量 GNU 扩展 |
-| **基础编译环境** | C++20 默认编译命令 | `g++ -x c++ -O2 -std=gnu++20 -static -DONLINE_JUDGE -o 目标二进制 源文件` |
-| **基础编译环境** | 语言标准选项 | `-std=gnu++20`：启用带 GNU 扩展的 C++20 标准，兼容全部 ISO C++20 特性与 GNU 语法扩展 |
-| **基础编译环境** | 优化等级选项 | `-O2`：标准发布级优化，为算法竞赛通用默认优化等级，兼顾编译速度与运行性能 |
-| **基础编译环境** | 静态链接选项 | `-static`：静态链接所有依赖库（libstdc++、libm 等），生成无运行时动态库依赖的独立二进制 |
-| **基础编译环境** | 预定义宏 | `-DONLINE_JUDGE`：预定义 `ONLINE_JUDGE` 宏，可用于代码中区分本地开发与线上评测环境 |
-| **基础编译环境** | 警告与调试规则 | 默认不开启 `-Wall/-Wextra` 警告，警告不导致编译失败；不默认生成调试符号、不默认启用 LTO |
-| **基础编译环境** | 编译时长限制 | 单文件编译需在 30 秒内完成，超时直接判定为 Compile Error |
-| **基础编译环境** | 源码大小限制 | 单文件源码最大 256KB |
-| **CPU与指令集硬件** | 云平台机型 | Google Compute Engine (GCP) `c2-standard-4` 计算优化型实例 |
-| **CPU与指令集硬件** | CPU 规格 | Intel Xeon Scalable（Cascade Lake / 第二代可扩展处理器），基础主频 3.1GHz，单核睿频 3.8GHz |
-| **CPU与指令集硬件** | AVX-512 已支持子集 | 完整支持 AVX512F（基础核心集）、AVX512DQ、AVX512CD、AVX512BW、AVX512VL、AVX512IFMA、AVX512VNNI |
-| **CPU与指令集硬件** | 向下兼容 SIMD 集 | 完整支持 AVX2、AVX、SSE 全系列（SSE/SSE2/SSE3/SSSE3/SSE4.1/SSE4.2）、FMA 指令集 |
-| **CPU与指令集硬件** | 通用扩展指令集 | 支持 BMI1、BMI2、ADX、AES-NI、POPCNT、LZCNT 等常用位运算、密码学扩展指令 |
-| **CPU与指令集硬件** | 默认启用状态 | 默认编译不自动启用高级指令集，需通过 `#pragma GCC target` 在代码中显式开启 |
-| **CPU与指令集硬件** | 指令集启用方式 | 按需启用：`#pragma GCC target("avx512f,avx512dq,avx512cd,avx512bw,avx512vl")`   全量启用：`#pragma GCC target("arch=cascadelake")` |
-| **CPU与指令集硬件** | 生效验证方式 | 启用后可通过 `__AVX512F__` `__AVX2__` 等内置预定义宏判断指令集是否生效 |
-| **运行时资源限制** | 总内存限制 | 默认 2GB，覆盖栈、堆、代码段、运行时开销的全部进程内存占用，超限触发 Runtime Error |
-| **运行时资源限制** | 栈空间限制 | C/C++ 无单独硬上限，上限由总内存约束，递归深度仅受总内存限制 |
-| **运行时资源限制** | CPU 调度规则 | 单核心单线程调度，多线程/多进程语法合法但无法获得多核加速收益 |
-| **运行时资源限制** | 进程数上限 | 单任务总进程数上限为 64（含主进程、子进程与系统内部进程），超限触发 Runtime Error |
-| **运行时资源限制** | 执行时间限制 | 各题目独立设置，常见档位为 2s / 5s / 10s，以题目页面标注为准 |
-| **运行时资源限制** | 时间统计口径 | 统计 CPU 执行时间（用户态+内核态总和），非墙钟时间，不受 I/O 调度延迟影响 |
-| **运行时资源限制** | 内存统计口径 | 统计进程总驻留内存（RSS），包含全部运行时开销 |
-| **系统底层环境** | 操作系统 | Ubuntu 22.04 LTS |
-| **系统底层环境** | glibc 版本 | 2.35（Ubuntu 22.04 默认配套版本） |
-| **系统底层环境** | 沙箱机制 | 程序运行在 DOMjudge 隔离沙箱中，限制非常规系统调用与外部资源访问 |
-| **系统底层环境** | 安全机制 | 系统级开启 ASLR 地址空间随机化；默认编译不启用栈金丝雀（Stack Canary）保护 |
-| **C++语言与扩展特性** | C++20 核心特性 | 完整支持 concepts、ranges、三路比较运算符、consteval、协程等全部标准特性 |
-| **C++语言与扩展特性** | 128位整型 | 完整支持 `__int128_t` / `unsigned __int128`，可直接参与运算，仅不支持标准流直接输入输出 |
-| **C++语言与扩展特性** | 高精度浮点数 | 支持 `__float128` 128位高精度浮点数 |
-| **C++语言与扩展特性** | GNU 扩展支持 | 全量支持，包含语句表达式、全部 `__builtin` 内建函数、属性标记等 |
-| **C++语言与扩展特性** | 内联汇编 | 支持 x86\_64 架构 AT&T 格式用户态内联汇编，特权指令会触发运行错误 |
-| **C++语言与扩展特性** | 可用库范围 | 仅可使用 C++ 标准库（STL），无 Boost、Eigen 等第三方扩展库 |
-| **C++语言与扩展特性** | 数学库支持 | libm 数学库默认链接，无需额外添加 `-lm` 参数 |
-| **评测与IO规则** | 输入输出通道 | 仅支持标准输入（stdin）、标准输出（stdout），禁止本地文件读写、外部命令调用、网络访问 |
-| **评测与IO规则** | IO 性能优化建议 | 添加 `ios::sync_with_stdio(false); cin.tie(nullptr);` 可大幅提升 cin/cout 运行速度 |
-| **评测与IO规则** | 浮点数输出规范 | 建议使用 `cout << fixed << setprecision(15);` 控制输出精度，满足题目误差要求 |
-| **评测与IO规则** | 错误判定分类 | 编译超时/语法错误/链接失败 → Compile Error；内存超限/进程超限/段错误/浮点异常 → Runtime Error |
-| **评测与IO规则** | 输出判定规则 | 普通题目逐字节严格比对；浮点数题目按题目指定的绝对/相对误差阈值判定 |
-| **高级编译特性** | LTO 链接时优化 | 默认不开启，可通过 `#pragma GCC optimize("lto")` 显式启用，静态链接下可正常生效 |
-| **高级编译特性** | PGO 剖面优化 | 不支持，评测环境无法提供训练数据与二次编译流程 |
-| **高级编译特性** | 优化等级扩展 | **【LC 实测无效 2026-07-18】** `#pragma GCC optimize("O3,unroll-loops")` 在 LC 评测机上无性能提升（O2 基线与 pragma O3 两次提交时间完全相同）。详见文末"重要更正"。保守估计 O3 不可用 |
-| **高级编译特性** | 目标架构优化 | 可通过指定 `arch=cascadelake` 参数，一次性启用对应架构全量指令集与指令调度优化 |
+| 编译器 | **GCC 15.2** | 不是 11.4！豆包旧文档严重过时 |
+| 优化级别 | **-O2** | 确认是 O2，不是 O3 |
+| 标准 | **-std=c++23**（或 c++20/c++17） | 注意是 `c++23` 不是 `gnu++23`（严格 ISO 模式，无 GNU 扩展？需实测验证 `__int128` 是否可用） |
+| 静态链接 | **无 -static** | 豆包旧文档错误的写了 -static，实际没有 |
+| 架构 | **-march=native** | 关键！会针对评测机 CPU 自动启用全部可用指令集 |
+| 预定义宏 | **-DEVAL -DONLINE_JUDGE** | 两个宏都定义（题目 checker 用 EVAL） |
+| AC Library | **-I /opt/ac-library** | AtCoder Library 可用（1.6 版本） |
+| 警告 | **无 -Wall/-Wextra** | 警告不影响编译 |
+| LTO | **未启用** | 命令行无 -flto；可用 `#pragma GCC optimize("lto")` 显式开 |
 
 ---
 
-## 验证依据说明
+## 3. 评测机硬件（LC /help 页面）
 
-1. 硬件与运行限制：来自 yosupo 主办赛事官方评测文档，与 Library Checker 共用同一套 GCP 评测集群与沙箱规则
-2. CPU 指令集：基于 GCP C2 系列机型官方规格（Cascade Lake 架构 Xeon 处理器）交叉验证，AVX-512 子集符合 Intel 官方指令集支持矩阵
-3. 编译器与系统：基于 Ubuntu 22.04 LTS 默认 GCC 版本与社区大量提交实测验证，匹配 C++20 特性完整支持能力
-4. 编译选项：参考 DOMjudge 竞赛环境默认配置与 Library Checker 提交的编译错误日志反向验证
+| 项 | 值 |
+| --- | --- |
+| 云平台机型 | **GCP c2d-highcpu-8** |
+| CPU | **AMD EPYC™ 7B13**（Milan / Zen 3） |
+| 核心限制 | **1 core**（单核调度） |
+| 内存 | **1 GiB** |
+| 栈大小 | **Unlimited** |
+
+### AMD EPYC 7B13 (Milan / Zen 3) 指令集
+
+- **AVX2** + **FMA** + **BMI1/BMI2** + **POPCNT** + **LZCNT** + **ADX** + **AES-NI**
+- **AVX-512**: AVX512F/DQ/CD/BW/VL/IFMA/VNNI（Milan 全量支持，但数据通路 256-bit，AVX-512 指令双发射）
+- **SSE** 全系列
+
+### 与豆包旧文档的差异（重要）
+
+| 项 | 豆包旧文档（错） | 实际（对） |
+| --- | --- | --- |
+| 机型 | c2-standard-4 | c2d-highcpu-8 |
+| CPU | Intel Xeon Cascade Lake | AMD EPYC 7B13 (Milan/Zen3) |
+| 内存 | 2GB | 1 GiB |
+| -march=native | 无（需手动 #pragma target） | **有**（自动启用全部指令集） |
+| -static | 有 | **无** |
+| 指令集启用方式 | `#pragma GCC target("arch=cascadelake")` | 不需要！-march=native 已自动启用 |
 
 ---
 
-## 重要更正（2026-07-18）：pragma O3 在 LC 上无效
+## 4. 微架构影响（Zen 3 vs Cascade Lake）
 
-### 发现
+豆包旧文档假设是 Intel Cascade Lake，实际是 AMD Zen 3。两者微架构差异：
 
-**LC 实测**：提交 addition_of_big_integers，同一份代码通过 `#define ENABLE_O3_MODE` 开关 pragma：
-- O2 基线提交与 pragma O3 提交，**两次时间完全相同**
-- 结论：**`#pragma GCC optimize("O3,unroll-loops")` 在 LC 评测机上不生效**
+| 项 | Cascade Lake (Intel) | Milan / Zen 3 (AMD) |
+| --- | --- | --- |
+| AVX-512 数据通路 | 真 512-bit（但降频） | 256-bit（双发射执行 512-bit 指令） |
+| AVX-512 降频 | 有（AVX-512 heavy 降频明显） | 无（Zen 3 不因 AVX-512 降频） |
+| 端口/吞吐 | 不同 | 不同 |
+| 向量化偏好 | 256-bit AVX2 通常够用 | AVX-512 256-bit 实际性能跟 AVX2 接近 |
 
-### VM 对照实验（与 LC 矛盾，仅供参考）
+**实践含义**：
+- `-march=native` 已启用，代码无需 `#pragma GCC target` 即可用 `__AVX2__` `__AVX512F__` `__BMI2__` `__FMA__` 宏
+- 手写 SIMD 时优先 AVX2 (256-bit)，AVX-512 增益可能有限（Zen 3 256-bit 通路）
+- 本地 VM（Tiger Lake i7-11370H）微架构跟 LC (Milan) 不同，向量化/指令延迟/端口吞吐有差异，本地测速仅供参考
 
-- 环境：Ubuntu 26.04 + g++-11.5.0（接近 LC 的 11.4.0）
-- 结果：pragma O3 比 O2 快 17.4%（207ms vs 171ms）
-- 汇编证实：O2 无向量化（0 条 packed 指令），pragma O3 有向量化（16 条 packed 指令）
-- 矛盾原因未明，推测 LC 沙箱过滤 pragma 或使用定制 GCC
+---
 
-### 保守结论
+## 5. 源码与运行限制
 
-- **O3 不可用**：不要依赖 `#pragma GCC optimize` 提升性能
-- 可用优化方向：算法、I/O（mmap+oBuffer）、内存布局、手动 SIMD（`#pragma GCC target` 仍可用，需另行验证）
+| 项 | 值 | 来源 |
+| --- | --- | --- |
+| 源码大小 | **256 KB** | LC 规则（豆包旧文档此条正确） |
+| 编译时长 | 未在 langs.toml 明示，社区传闻 30s | 需实测 |
+| 输入输出 | stdin/stdout | LC 规则 |
+| 文件读写 | 禁止 | LC 规则 |
+| 时间统计 | CPU 时间（用户态+内核态） | LC 规则 |
+| 时间限制 | 题目独立设置 | LC 题面 |
+| 栈空间 | Unlimited | LC /help 页面确认 |
+| 内存 | 1 GiB（含栈/堆/代码段） | LC /help 页面确认 |
+| 单核 | 1 core | LC /help 页面确认 |
+| 进程数上限 | 未在 langs.toml 明示 | 需实测 |
+
+---
+
+## 6. 对 O3 预展开项目的影响
+
+### 6.1 好消息：LC 确实是 O2
+
+`-O2` 在 langs.toml 中确认。O3 预展开项目方向正确——把 O3 GIMPLE IR 回转成 C++ 源码，再用 LC 的 O2 编译，理论上可获得 O3 级别优化。
+
+### 6.2 坏消息：GCC 版本错配
+
+- 你的修改版 GCC：**11.4.0**（加 `-fo3-pre-expand` 开关）
+- LC 实际编译器：**GCC 15.2**
+
+GIMPLE IR 在版本间不完全兼容。但用户判断"GIMPLE 回转应该没啥影响"——因为 GIMPLE-TO-CPP 产出的是合法 C++20 源码（不是 GIMPLE IR 本身），所以版本错配只影响"O3 优化的具体 pass 集合"，不影响"C++ 源码能否在 15.2 编译"。
+
+**风险**：GCC 15.2 的 O2 可能已原生包含 11.4 O3 的部分优化（loop interchange、SLSR、if-conversion 等在 12-14 版本持续改进），导致预展开增益被吃掉。
+
+**对策**：用户决定把 `-fo3-pre-expand` 移植到 GCC 15.2（用 diff 扫 11.4 vs 15.2 的 O3 pass 差异，工作量可控）。
+
+### 6.3 关键变量：-march=native
+
+LC 有 `-march=native`（AMD EPYC 7B13 / Milan）。这意味着：
+- AVX2/FMA/BMI2/AVX-512 自动启用，无需 `#pragma GCC target`
+- 编译器会针对 Zen 3 微架构做指令调度
+- 本地 VM（Tiger Lake）和 LC（Milan）的 `-march=native` 产出不同机器码，性能特征不同
+
+### 6.4 pragma O3 无效结论需重新验证
+
+豆包旧文档（2026-07-18）记录："LC 实测 pragma O3 无效，两次提交时间相同"。
+
+**此结论基于错误前提**（豆包假设 GCC 11.4 + 无 -march=native）。实际 LC 是 GCC 15.2 + -march=native。在 GCC 15.2 下 `#pragma GCC optimize("O3")` 优先级仍高于命令行 -O2，理论应生效。
+
+**需重新实测**：提交同一份代码，O2 基线 vs `#pragma GCC optimize("O3,unroll-loops")`，对比时间。如果 GCC 15.2 下 pragma O3 生效，则 O3 预展开项目的"必要性"下降（直接 pragma 即可）；如果仍无效，说明 LC 做了 pragma 过滤，O3 预展开仍是唯一路径。
+
+---
+
+## 7. 待实测验证项
+
+1. **-std=c++23 是否启用 GNU 扩展**：`c++23` vs `gnu++23` 差异（`__int128`、语句表达式、`__builtin` 系列）
+2. **pragma O3 在 GCC 15.2 下是否生效**：重新提交 addition_of_big_integers 对比
+3. **AVX-512 实际增益**：Milan 256-bit 通路下 AVX-512 vs AVX2 性能对比
+4. **编译时长上限**：670KB 预展开源码在 GCC 15.2 下编译是否超时
+5. **进程数上限**：未在 langs.toml 明示
+6. **AC Library 具体版本**：1.6 版本包含哪些模块
+
+---
+
+## 8. 数据源链接
+
+- LC /help 页面：https://judge.yosupo.jp/help
+- langs.toml 原文：https://github.com/yosupo06/library-checker-judge/blob/master/langs/langs.toml
+- Dockerfile 目录：https://github.com/yosupo06/library-checker-judge/blob/master/langs/
+- 仓库主页：https://github.com/yosupo06/library-checker-judge
