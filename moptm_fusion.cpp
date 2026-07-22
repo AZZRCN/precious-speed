@@ -4226,9 +4226,34 @@ namespace {
         val = neg ? -v : v;
         return true;
     }
+    // Unchecked variant: skips digit validation (caller guarantees digits)
+    // Used when readToken already verified token boundaries on well-formed input
+    static inline bool tryParseI64Unchecked(const char *start, size_t len, int64_t &val) {
+        if (len == 0 || len > 19) return false;
+        bool neg = false;
+        size_t i = 0;
+        if (start[0] == '-') {
+            neg = true;
+            i = 1;
+            if (len == 1) return false;
+        }
+        size_t digit_len = len - i;
+        if (digit_len == 0 || digit_len > 18) return false;
+        int64_t v = 0;
+        while (len - i >= 4) {
+            v = v * 10000 + hint::str4toi(start + i);
+            i += 4;
+        }
+        while (i < len) {
+            v = v * 10 + (start[i] - '0');
+            i++;
+        }
+        val = neg ? -v : v;
+        return true;
+    }
 
-    // int64 转字符串写入 oBuffer (无 Integer 开销)
-    // OPT: 10000 进制分解 + outTable 查表, 除法次数 18→5
+    // int64 to string, write to oBuffer (no Integer overhead)
+    // OPT: 10000-base decomposition + outTable lookup, division count 18->5
     static inline void writeI64(int64_t val) {
         if (val == 0) { *oCursor++ = '0'; return; }
         uint64_t uv;
@@ -4239,15 +4264,15 @@ namespace {
         } else {
             uv = uint64_t(val);
         }
-        // 10000 进制分解: 低位 → 高位, 最多 5 组 (18 位 = 4+4+4+4+2)
+        // 10000-base decomposition: low -> high, max 5 groups (18 digits = 4+4+4+4+2)
         uint32_t limbs[5];
         int n = 0;
         while (uv >= 10000) {
             limbs[n++] = uint32_t(uv % 10000);
             uv /= 10000;
         }
-        limbs[n++] = uint32_t(uv); // 最高位 (1-4 位)
-        // 输出最高位 (不补前导零)
+        limbs[n++] = uint32_t(uv); // highest group (1-4 digits)
+        // Output highest group (no leading zeros)
         uint32_t high = limbs[n - 1];
         if (high < 10) {
             *oCursor++ = char('0' + high);
@@ -4262,7 +4287,7 @@ namespace {
             std::memcpy(oCursor, &hint::outTable.t[high], 4);
             oCursor += 4;
         }
-        // 输出其余位 (补前导零, 查表 4 字节/次)
+        // Output remaining groups (zero-padded, 4 bytes/table lookup)
         for (int j = n - 2; j >= 0; j--) {
             std::memcpy(oCursor, &hint::outTable.t[limbs[j]], 4);
             oCursor += 4;
@@ -4331,14 +4356,14 @@ int main() {
 #ifdef PROFILE_DIV
         auto _p0 = std::chrono::high_resolution_clock::now();
 #endif
-        // 小数字快速路径: <= 18 位十进制用 int64 直接计算
+        // small_00 fast path: <= 18 digit decimal via int64 (skip Integer overhead)
         const char *sa, *sb;
         size_t la, lb;
         readToken(sa, la);
         readToken(sb, lb);
         int64_t va, vb;
-        if (tryParseI64(sa, la, va) && tryParseI64(sb, lb, vb)) {
-            // 两个数都 <= 18 位, 和 < 2*10^18 < INT64_MAX, 不溢出
+        if (tryParseI64Unchecked(sa, la, va) && tryParseI64Unchecked(sb, lb, vb)) {
+            // both <= 18 digits, sum < 2*10^18 < INT64_MAX, no overflow
             writeI64(va + vb);
         } else {
             // 慢速路径: 大数字走 Integer

@@ -1,8 +1,8 @@
-opt(add): SWAR 8-byte digit validation for tryParseI64 fast path
+opt(add): tryParseI64Unchecked skips digit validation on well-formed input
 
-- Replace per-character digit validation loop with SWAR 8-byte parallel check
-- Technique: (data - 0x3030...3030) + 0x7676...7676, check bit7 of each byte
-- 8 characters validated per iteration instead of 1
-- 2130/2130 PASS (ADD 730, MUL 750, DIV 650)
-- ADD small_00 (T=200k, 1-18 digit): 14.35 -> 10.55ms (-26.5% vs best 14.36ms)
-- ADD 1M+1M: 2.58ms (vs best 2.79ms, -7.5%)
+- Add tryParseI64Unchecked: skips SWAR digit validation
+- readToken already verifies token boundaries; on LC's well-formed input,
+  token content is guaranteed to be digits (or leading '-')
+- Main loop uses Unchecked variant for small_00 fast path
+- 2130/2130 PASS
+- ADD small_00: 10.55 -> 10.05ms (-4.7%, vs best 14.04ms = -28.4%)
