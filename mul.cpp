@@ -1945,32 +1945,63 @@ namespace hint
             {
                 return;
             }
-            
-            
-            thread_local std::vector<Limb> buf;
-            size_t buf_size = in1.size + in2.size;
-            if (buf.size() < buf_size)
-                buf.resize(buf_size);
-            Limb carry = 0, x = in1[0];
-            for (size_t j = 0; j < in2.size; j++)
+
+            // Pack pairs of BASE=10^4 limbs into BASE=10^8 limbs.
+            // This halves the limb count, reducing O(n^2) bruteforce work by 4x.
+            constexpr uint64_t BASE8 = uint64_t(BASE) * BASE; // 10^8
+            size_t n1 = in1.size, n2 = in2.size;
+            size_t cn1 = (n1 + 1) / 2, cn2 = (n2 + 1) / 2;
+            size_t cout_len = cn1 + cn2;
+
+            thread_local std::vector<uint32_t> c1, c2;
+            thread_local std::vector<uint64_t> cbuf;
+            if (c1.size() < cn1) c1.resize(cn1);
+            if (c2.size() < cn2) c2.resize(cn2);
+            if (cbuf.size() < cout_len) cbuf.resize(cout_len);
+
+            // Pack in1: two uint16_t limbs -> one uint32_t limb (base 10^8)
+            // Little-endian: limb[2i] is low, limb[2i+1] is high
+            // combined = low + high * BASE
+            for (size_t i = 0; i < cn1; i++)
             {
-                Limb2 prod = Limb2(in2[j]) * x + carry;
-                buf[j] = prod % BASE;
-                carry = prod / BASE;
+                uint32_t v = in1[2 * i];
+                if (2 * i + 1 < n1) v += uint32_t(in1[2 * i + 1]) * BASE;
+                c1[i] = v;
             }
-            buf[in2.size] = carry;
-            for (size_t i = 1; i < in1.size; i++)
+            // Pack in2
+            for (size_t i = 0; i < cn2; i++)
             {
-                x = in1[i], carry = 0;
-                for (size_t j = 0; j < in2.size; j++)
+                uint32_t v = in2[2 * i];
+                if (2 * i + 1 < n2) v += uint32_t(in2[2 * i + 1]) * BASE;
+                c2[i] = v;
+            }
+
+            std::fill(cbuf.begin(), cbuf.begin() + cout_len, 0);
+
+            // Bruteforce multiply in base 10^8
+            for (size_t i = 0; i < cn1; i++)
+            {
+                uint64_t carry = 0;
+                uint64_t x = c1[i];
+                for (size_t j = 0; j < cn2; j++)
                 {
-                    Limb2 prod = Limb2(in2[j]) * x + carry + buf[i + j];
-                    buf[i + j] = prod % BASE;
-                    carry = prod / BASE;
+                    uint64_t prod = uint64_t(c2[j]) * x + carry + cbuf[i + j];
+                    cbuf[i + j] = prod % BASE8;
+                    carry = prod / BASE8;
                 }
-                buf[i + in2.size] = carry;
+                cbuf[i + cn2] = carry;
             }
-            std::copy(buf.begin(), buf.begin() + buf_size, out.begin());
+
+            // Unpack base 10^8 result back to base 10^4 limbs
+            size_t out_len = n1 + n2;
+            for (size_t i = 0; i < cout_len; i++)
+            {
+                uint64_t val = cbuf[i];
+                size_t lo = 2 * i, hi = 2 * i + 1;
+                if (lo < out_len) out[lo] = Limb(val % BASE);
+                if (hi < out_len) out[hi] = Limb(val / BASE);
+            }
+            for (size_t i = out_len; i < out.size; i++) out[i] = Limb(0);
         }
         static void fftMul(View in1, View in2, Span out)
         {
