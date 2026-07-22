@@ -63,7 +63,7 @@ if not os.path.exists('/home/azzr/best_add'):
 # Compile fast_io variants
 variants = []
 for pv in [1, 4, 6, 7]:
-    for wv in [1, 2]:
+    for wv in [1, 2, 3, 4]:
         name = f"fast_io_p{pv}w{wv}"
         src = f"/home/azzr/{name}.cpp"
         exe = f"/home/azzr/{name}"

@@ -787,11 +787,104 @@ static inline void writeI64(int64_t val) {
     }
 }
 
+//=================================================================
+// WRITE VER 3: 2-digit groups + 200B table (L1 resident)
+// Reduces table from 40KB to 200B; each divmod100 yields 2 digits
+//=================================================================
+#elif WRITE_VER == 3
+
+static char twoDigitTable[200]; // 100 entries * 2 bytes: "00".."99"
+static void initTwoDigitTable() {
+    for (int i = 0; i < 100; i++) {
+        twoDigitTable[i*2]   = char('0' + i / 10);
+        twoDigitTable[i*2+1] = char('0' + i % 10);
+    }
+}
+
+static inline void writeI64(int64_t val) {
+    if (val == 0) { *oCursor++ = '0'; return; }
+    uint64_t uv;
+    bool neg = val < 0;
+    if (neg) {
+        *oCursor++ = '-';
+        uv = uint64_t(-(val + 1)) + 1;
+    } else {
+        uv = uint64_t(val);
+    }
+    // 2-digit groups, max 10 for uint64 (up to 20 digits)
+    uint8_t limbs[10];
+    int n = 0;
+    while (uv >= 100) {
+        limbs[n++] = uint8_t(uv % 100);
+        uv /= 100;
+    }
+    limbs[n++] = uint8_t(uv);
+    // High group (1 or 2 digits)
+    uint8_t high = limbs[n - 1];
+    if (high < 10) {
+        *oCursor++ = char('0' + high);
+    } else {
+        std::memcpy(oCursor, &twoDigitTable[high * 2], 2);
+        oCursor += 2;
+    }
+    // Remaining groups: 2 digits each via 200B table
+    for (int j = n - 2; j >= 0; j--) {
+        std::memcpy(oCursor, &twoDigitTable[limbs[j] * 2], 2);
+        oCursor += 2;
+    }
+}
+
+//=================================================================
+// WRITE VER 4: pure multiplicative inverse, no table
+// divmod100 via single mul (magic = ceil(2^64/100))
+// ASCII computed directly from 2-digit value, no lookup table
+//=================================================================
+#elif WRITE_VER == 4
+
+// divmod100: rely on compiler -O2 (already uses multiplicative inverse)
+// V4 core: no lookup table, ASCII computed directly from 2-digit value
+static inline void writeI64(int64_t val) {
+    if (val == 0) { *oCursor++ = '0'; return; }
+    uint64_t uv;
+    bool neg = val < 0;
+    if (neg) {
+        *oCursor++ = '-';
+        uv = uint64_t(-(val + 1)) + 1;
+    } else {
+        uv = uint64_t(val);
+    }
+    uint8_t limbs[10];
+    int n = 0;
+    while (uv >= 100) {
+        limbs[n++] = uint8_t(uv % 100);
+        uv /= 100;
+    }
+    limbs[n++] = uint8_t(uv);
+    // High group (1 or 2 digits), direct ASCII
+    uint8_t high = limbs[n - 1];
+    if (high < 10) {
+        *oCursor++ = char('0' + high);
+    } else {
+        *oCursor++ = char('0' + high / 10);
+        *oCursor++ = char('0' + high % 10);
+    }
+    // Remaining: direct ASCII from 2-digit value, no table
+    for (int j = n - 2; j >= 0; j--) {
+        uint8_t v = limbs[j];
+        *oCursor++ = char('0' + v / 10);
+        *oCursor++ = char('0' + v % 10);
+    }
+}
+
 #endif // WRITE_VER
 
 // === Main: ADD benchmark (same I/O format as LC ADD) ===
 int main() {
+#if WRITE_VER == 3
+    initTwoDigitTable();
+#elif WRITE_VER == 1 || WRITE_VER == 2
     initOutTable();
+#endif
     initInput();
 
     // Read T (number of test cases)
