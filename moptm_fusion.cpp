@@ -57,6 +57,36 @@ namespace hint
 
     constexpr size_t FFT_MAX_LEN = size_t(1) << 23;
 
+    // 32-byte aligned allocator for AVX2 FFT buffers
+    // posix_memalign guarantees 32-byte alignment, enabling _mm256_load_pd/_mm256_store_pd
+    // and __builtin_assume_aligned hints to the compiler
+    template <typename T>
+    struct AlignedAlloc32
+    {
+        using value_type = T;
+        using pointer = T *;
+        using const_pointer = const T *;
+        using size_type = size_t;
+        using difference_type = ptrdiff_t;
+        AlignedAlloc32() = default;
+        template <typename U>
+        AlignedAlloc32(const AlignedAlloc32<U> &) {}
+        T *allocate(size_t n)
+        {
+            void *p = nullptr;
+            if (posix_memalign(&p, 32, n * sizeof(T)) != 0)
+                throw std::bad_alloc();
+            return static_cast<T *>(p);
+        }
+        void deallocate(T *p, size_t) { free(p); }
+        template <typename U>
+        struct rebind { using other = AlignedAlloc32<U>; };
+        bool operator==(const AlignedAlloc32 &) const { return true; }
+        bool operator!=(const AlignedAlloc32 &) const { return false; }
+    };
+    template <typename T>
+    using AlignedVec32 = std::vector<T, AlignedAlloc32<T>>;
+
     template <typename T>
     constexpr T int_floor2(T n)
     {
@@ -574,6 +604,7 @@ namespace hint
                     expand(float_len);
                     const size_t fft_len = float_len / 2, c2_len = fft_len / 2;
                     const size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
+                    // FFT buffers use AlignedVec32 (posix_memalign 32), hint compiler for AVX2
                     auto tp1 = reinterpret_cast<const C2 *>(table1.getBegin(fft_len));
                     auto tp3 = reinterpret_cast<const C2 *>(table3.getBegin(fft_len));
                     auto it = reinterpret_cast<C2 *>(inout);
@@ -607,6 +638,7 @@ namespace hint
                     idit<false>(inout + stride * 3, stride);
                     const size_t fft_len = float_len / 2, c2_len = fft_len / 2;
                     const size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
+                    // FFT buffers use AlignedVec32 (posix_memalign 32), hint compiler for AVX2
                     auto tp1 = reinterpret_cast<const C2 *>(table1.getBegin(fft_len));
                     auto tp3 = reinterpret_cast<const C2 *>(table3.getBegin(fft_len));
                     auto it = reinterpret_cast<C2 *>(inout);
@@ -1946,7 +1978,7 @@ namespace hint
             }
             size_t conv_len = len1 + len2 - 1, float_len = int_ceil2(conv_len);
             
-            thread_local std::vector<double> tv1, tv2;
+            thread_local AlignedVec32<double> tv1, tv2;
             if (tv1.size() < float_len)
                 tv1.resize(float_len);
             if (tv2.size() < float_len)
@@ -2014,7 +2046,7 @@ namespace hint
             }
             size_t conv_len = len * 2 - 1, float_len = int_ceil2(conv_len);
             
-            thread_local std::vector<double> tv;
+            thread_local AlignedVec32<double> tv;
             if (tv.size() < float_len)
                 tv.resize(float_len);
             double *v = tv.data();
@@ -2105,7 +2137,7 @@ namespace hint
             size_t n_chunks = (len_big + chunk - 1) / chunk;
             size_t float_len = int_ceil2(chunk + chunk - 1);
             
-            thread_local std::vector<double> b_dft;
+            thread_local AlignedVec32<double> b_dft;
             if (b_dft.size() < float_len) b_dft.resize(float_len);
             prepareDFT(small, b_dft.data(), float_len);
             
@@ -2204,7 +2236,7 @@ namespace hint
             }
             size_t conv_len = a_len + b_len - 1;
             assert(float_len >= conv_len);
-            thread_local std::vector<double> tv;
+            thread_local AlignedVec32<double> tv;
             if (tv.size() < float_len)
                 tv.resize(float_len);
             double *v = tv.data();
@@ -2281,7 +2313,7 @@ namespace hint
             }
             assert(a_len <= m && b_len <= m);
 
-            thread_local std::vector<double> tv;
+            thread_local AlignedVec32<double> tv;
             if (tv.size() < 2 * m)
                 tv.resize(2 * m);
             double *va = tv.data();
@@ -2395,7 +2427,7 @@ namespace hint
             }
             assert(a_len <= m);
 
-            thread_local std::vector<double> tv;
+            thread_local AlignedVec32<double> tv;
             if (tv.size() < m)
                 tv.resize(m);
             double *v = tv.data();
@@ -3098,7 +3130,7 @@ namespace hint
                 //     否则用 slow 路径 (absMul, 6 FFT)
                 if (divisor_high.size >= FFT_MUL_THRESHOLD)
                 {
-                    thread_local std::vector<double> inv_dft_buf_c1, div_dft_buf_c1;
+                    thread_local AlignedVec32<double> inv_dft_buf_c1, div_dft_buf_c1;
                     size_t inv_fl = int_ceil2(2 * divisor_high.size + 1);
                     size_t div_fl = int_ceil2(2 * divisor_high.size);
                     if (inv_dft_buf_c1.size() < inv_fl) inv_dft_buf_c1.resize(inv_fl);
@@ -3183,7 +3215,7 @@ namespace hint
             // 2. DFT 预计算
             // fftMulPre #1: divid_high(this_in+1) * inv(in+1), 卷积长度 <= 2*in+1
             // fftMulPre #2: qhat(this_in+1) * divisor(len2), 卷积长度 <= len2+in
-            thread_local std::vector<double> inv_dft_buf, divisor_dft_buf;
+            thread_local AlignedVec32<double> inv_dft_buf, divisor_dft_buf;
             size_t inv_float_len = int_ceil2(2 * in + 1);
             // OPT: divisor_float_len 从 int_ceil2(len2+in+1) 改为 int_ceil2(len2+in)
             //   conv_len = qhat_span.size + len2 - 1 = (this_in+1) + len2 - 1 = this_in + len2 <= in + len2
@@ -3196,7 +3228,7 @@ namespace hint
             // fftMulPre #2 用 cyclic mod (B^m-1), FFT 大小 m=int_ceil2(len2+1)
             // 1M/500k: m=131072 (vs 线性卷积 262144), FFT 减半
             // unwrap: prod_low = C - window_high (GMP 近似, 修正循环处理误差)
-            thread_local std::vector<double> divisor_dft_mod_buf;
+            thread_local AlignedVec32<double> divisor_dft_mod_buf;
             // FIX: cyclic_m 需满足 2*cyclic_m > len2+in >= len2+this_in, 否则:
             //   wn = len2+this_in-cyclic_m > cyclic_m → Span(ptr,wn) 越界 + (cyclic_m-wn) 下溢
             //   且 unwrap 只处理一次 wrap (k=1), k>=2 时残差完全错误
@@ -3580,7 +3612,7 @@ namespace hint
             auto quot_it = quotient.ptr + (len1_rem - len2);
 
              // 预计算 divisor_dft（同时用于 absInvNewton 的 DFT 复⽤和 fast blocks）
-             thread_local std::vector<double> inv_dft_buf, divisor_dft_buf;
+             thread_local AlignedVec32<double> inv_dft_buf, divisor_dft_buf;
              size_t inv_float_len = int_ceil2(len2 * 2 + 1);
              size_t divisor_float_len = int_ceil2(len2 * 2);
              bool has_divisor_dft = false;
