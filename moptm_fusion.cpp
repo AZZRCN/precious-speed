@@ -557,8 +557,7 @@ namespace hint
                     auto it = reinterpret_cast<C2 *>(__builtin_assume_aligned(inout, 32));
                     for (auto end = it + stride1; it < end; it++, tp1++, tp3++)
                     {
-                        // __builtin_prefetch: overlap next iteration's twiddle factor fetch
-                        // with current iteration's computation (tp1/tp3 are sequential, L1 likely)
+                        // __builtin_prefetch: twiddle factors (tp1/tp3) are sequential, L1 likely
                         HINT_PREFETCH(tp1 + 4, 0, 1);
                         HINT_PREFETCH(tp3 + 4, 0, 1);
                         C2 c0 = it[0], c1 = it[stride1], c2 = it[stride2], c3 = it[stride3];
@@ -597,7 +596,7 @@ namespace hint
                     auto it = reinterpret_cast<C2 *>(__builtin_assume_aligned(inout, 32));
                     for (auto end = it + stride1; it < end; it++, tp1++, tp3++)
                     {
-                        // __builtin_prefetch: overlap next iteration's twiddle factor fetch
+                        // __builtin_prefetch: twiddle factors (sequential, L1 likely)
                         HINT_PREFETCH(tp1 + 4, 0, 1);
                         HINT_PREFETCH(tp3 + 4, 0, 1);
                         C2 c0 = it[0], c1 = it[stride1], c2 = it[stride2].mulConj(tp1[0]), c3 = it[stride3].mulConj(tp3[0]);
@@ -1031,6 +1030,48 @@ namespace hint
         for (; j < n; j++)
         {
             dst[j] = src[j];
+        }
+    }
+    // OPT: Merge copyU16ToF64 + std::fill into single pass to reduce memory traffic
+    // Copies n uint16 to double, then fills remaining [n, total) with 0.0
+    inline void copyU16ToF64AndFill(const uint16_t *src, double *dst, size_t n, size_t total)
+    {
+        size_t j = 0;
+#if defined(__AVX2__)
+        // Copy phase: uint16 → double (16 at a time)
+        for (; j + 16 <= n; j += 16)
+        {
+            __m256i vals = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(src + j));
+            __m128i lo128 = _mm256_castsi256_si128(vals);
+            __m128i hi128 = _mm256_extracti128_si256(vals, 1);
+            __m256i lo32 = _mm256_cvtepu16_epi32(lo128);
+            __m256i hi32 = _mm256_cvtepu16_epi32(hi128);
+            __m256d d0 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(lo32));
+            __m256d d1 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(lo32, 1));
+            __m256d d2 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(hi32));
+            __m256d d3 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(hi32, 1));
+            _mm256_storeu_pd(dst + j, d0);
+            _mm256_storeu_pd(dst + j + 4, d1);
+            _mm256_storeu_pd(dst + j + 8, d2);
+            _mm256_storeu_pd(dst + j + 12, d3);
+        }
+#endif
+        for (; j < n; j++)
+        {
+            dst[j] = src[j];
+        }
+        // Fill phase: zero remaining [n, total) — use AVX2 _mm256_setzero_pd for 4 at a time
+        j = n;
+#if defined(__AVX2__)
+        __m256d zero = _mm256_setzero_pd();
+        for (; j + 4 <= total; j += 4)
+        {
+            _mm256_storeu_pd(dst + j, zero);
+        }
+#endif
+        for (; j < total; j++)
+        {
+            dst[j] = 0.0;
         }
     }
     constexpr void itostr4(uint16_t n, char *s)
@@ -1958,10 +1999,8 @@ namespace hint
             if (tv2.size() < float_len)
                 tv2.resize(float_len);
             double *v1 = tv1.data(), *v2 = tv2.data();
-            copyU16ToF64(in1.ptr, v1, len1);
-            std::fill(v1 + len1, v1 + float_len, 0.0);
-            copyU16ToF64(in2.ptr, v2, len2);
-            std::fill(v2 + len2, v2 + float_len, 0.0);
+            copyU16ToF64AndFill(in1.ptr, v1, len1, float_len);
+            copyU16ToF64AndFill(in2.ptr, v2, len2, float_len);
             transform::fft::real_conv(v1, v2, float_len);
             uint64_t carry = 0;
             size_t i = 0;
@@ -2030,8 +2069,7 @@ namespace hint
             if (tv.size() < float_len)
                 tv.resize(float_len);
             double *v = tv.data();
-            copyU16ToF64(in.ptr, v, len);
-            std::fill(v + len, v + float_len, 0.0);
+            copyU16ToF64AndFill(in.ptr, v, len, float_len);
             transform::fft::real_conv(v, v, float_len);
             uint64_t carry = 0;
             size_t i = 0;
@@ -2199,8 +2237,7 @@ namespace hint
         {
             assert(is_2pow(float_len));
             assert(float_len >= in.size);
-            copyU16ToF64(in.begin(), dft_buf, in.size);
-            std::fill(dft_buf + in.size, dft_buf + float_len, 0.0);
+            copyU16ToF64AndFill(in.begin(), dft_buf, in.size, float_len);
             auto &fft = transform::fft::getSharedFFT<double>();
             fft.expand(float_len);
             fft.template dif<true>(dft_buf, float_len);
@@ -2223,8 +2260,7 @@ namespace hint
             if (tv.size() < float_len)
                 tv.resize(float_len);
             double *v = tv.data();
-            copyU16ToF64(a.ptr, v, a_len);
-            std::fill(v + a_len, v + float_len, 0.0);
+            copyU16ToF64AndFill(a.ptr, v, a_len, float_len);
             auto &fft = transform::fft::getSharedFFT<double>();
             fft.expand(float_len);
             fft.template dif<true>(v, float_len);
@@ -2305,10 +2341,8 @@ namespace hint
             double *va = tv.data();
             double *vb = tv.data() + m;
 
-            copyU16ToF64(a.ptr, va, a_len);
-            std::fill(va + a_len, va + m, 0.0);
-            copyU16ToF64(b.ptr, vb, b_len);
-            std::fill(vb + b_len, vb + m, 0.0);
+            copyU16ToF64AndFill(a.ptr, va, a_len, m);
+            copyU16ToF64AndFill(b.ptr, vb, b_len, m);
 
             auto &fft = transform::fft::getSharedFFT<double>();
             fft.expand(m);
@@ -2418,8 +2452,7 @@ namespace hint
                 tv.resize(m);
             double *v = tv.data();
 
-            copyU16ToF64(a.ptr, v, a_len);
-            std::fill(v + a_len, v + m, 0.0);
+            copyU16ToF64AndFill(a.ptr, v, a_len, m);
 
             auto &fft = transform::fft::getSharedFFT<double>();
             fft.expand(m);

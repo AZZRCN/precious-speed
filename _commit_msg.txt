@@ -1,6 +1,7 @@
-opt(mul): assume_aligned on FFT recursive calls for aligned AVX2
+refactor: merge copyU16ToF64 + std::fill into copyU16ToF64AndFill
 
-- dif/idit: add __builtin_assume_aligned on recursive inout + stride*k
-  All recursive sub-arrays are 32-byte aligned (stride*8*k % 32 == 0 for float_len >= 16)
+- New copyU16ToF64AndFill: single function copies uint16→double then fills remaining with 0.0
+  Uses AVX2 _mm256_setzero_pd for fill phase (4 doubles/iteration)
+- Replaces 6 copyU16ToF64 + std::fill pairs in fftMul/fftSqr/prepareDFT/fftMulPre/fftMulUnbalanced
 - 2130/2130 PASS
-- MUL 1M: 15.896 -> 15.328ms (-3.6%), 500k flat, 100k -1.6%
+- Performance neutral (std::fill was already AVX2-vectorized by compiler)
