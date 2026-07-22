@@ -550,6 +550,8 @@ namespace hint
                     const size_t fft_len = float_len / 2, c2_len = fft_len / 2;
                     const size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
                     // FFT buffers + twiddle tables: AlignedVec32 (posix_memalign 32), hint for AVX2
+                    // sizeof(C2) = 32, so it[0], it[stride1], it[stride2], it[stride3] all 32-byte aligned
+                    // (stride1/2/3 are integers, base ptr aligned → all C2 elements aligned)
                     auto tp1 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table1.getBegin(fft_len), 32));
                     auto tp3 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table3.getBegin(fft_len), 32));
                     auto it = reinterpret_cast<C2 *>(__builtin_assume_aligned(inout, 32));
@@ -568,9 +570,10 @@ namespace hint
                         it[0] = c0, it[stride1] = c1, it[stride2] = c2.mul(tp1[0]), it[stride3] = c3.mul(tp3[0]);
                     }
                     size_t stride = float_len / 4;
-                    dif<false>(inout, stride * 2);
-                    dif<false>(inout + stride * 2, stride);
-                    dif<false>(inout + stride * 3, stride);
+                    // Recursive calls: inout + stride*k are 32-byte aligned (stride*8*k % 32 == 0 for float_len >= 16)
+                    dif<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout, 32)), stride * 2);
+                    dif<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout + stride * 2, 32)), stride);
+                    dif<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout + stride * 3, 32)), stride);
                 }
                 template <bool RIRI_OUT>
                 void idit(Float inout[], size_t float_len)
@@ -583,9 +586,9 @@ namespace hint
                     }
                     expand(float_len);
                     size_t stride = float_len / 4;
-                    idit<false>(inout, stride * 2);
-                    idit<false>(inout + stride * 2, stride);
-                    idit<false>(inout + stride * 3, stride);
+                    idit<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout, 32)), stride * 2);
+                    idit<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout + stride * 2, 32)), stride);
+                    idit<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout + stride * 3, 32)), stride);
                     const size_t fft_len = float_len / 2, c2_len = fft_len / 2;
                     const size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
                     // FFT buffers + twiddle tables: AlignedVec32 (posix_memalign 32), hint for AVX2
