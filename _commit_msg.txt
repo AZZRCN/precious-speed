@@ -1,8 +1,0 @@
-opt(add): tryParseI64Unchecked skips digit validation on well-formed input
-
-- Add tryParseI64Unchecked: skips SWAR digit validation
-- readToken already verifies token boundaries; on LC's well-formed input,
-  token content is guaranteed to be digits (or leading '-')
-- Main loop uses Unchecked variant for small_00 fast path
-- 2130/2130 PASS
-- ADD small_00: 10.55 -> 10.05ms (-4.7%, vs best 14.04ms = -28.4%)

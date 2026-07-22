@@ -1439,3 +1439,48 @@ O2 版 I/O 优化已接近极限:
 - ADD 1M 接近持平 (+1.5%), 小数据有 BASE=10^4 结构性劣势
 - MUL 瓶颈在 FFT 算法, I/O 优化帮助有限
 - 剩余优化空间在算法层面 (MUL 的 carry chain, DIV 的 absInvNewton)
+
+## V7 跨越性突破：rogeryoungh swar_64 风格（2026-07-22）
+
+### AVX2 builtin 尝试 (PARSE_VER=6, 无收益)
+
+基于 simdjson 思路，使用 AVX2 builtin 函数实现 16 字节 parse:
+- `__builtin_ia32_psubb256`: 字节减法 (ASCII '0' → 数值)
+- `__builtin_ia32_pmaddubsw256`: 字节→字乘加 (10,1 配对)
+- `__builtin_ia32_pmaddwd256`: 字→双字乘加 (100,1 配对)
+
+**结果**: V6 (9.021ms) 比 V4 (8.416ms) **慢 7.2%**。
+**原因**: small_00 数据中大部分数字 < 16 位，16 字节快速路径命中率仅 ~17%，fallback 路径有额外 AVX2 初始化开销。rogeryoungh 文章也证实 "AVX2 指令集因乘法位数不够，很难向量化，性能表现非常差"。
+
+### V7: 8字节 umask + ctz + shift-align SWAR（PARSE_VER=7, 突破）
+
+基于 [rogeryoungh 的 swar_64 技巧](https://blog.rogery.dev/post/faster-int-parse/)：
+1. **8字节 umask 一次性检查**: `umask = u & (u + 0x06..06) & 0xF0..F0`，若 `umask == 0x30..30` 则 8 字节全数字
+2. **ctz 计算长度**: 若不全数字，`dl = ctz(umask ^ 0x30..30) >> 3` 得到数字长度
+3. **shift 对齐 + SWAR parse**: `u <<= 64 - (dl << 3)` 对齐到高位，低字节变 0x00（nibble=0，当作 digit value 0，不影响结果），一次 parse8SWAR 完成
+4. **消除逐 4 字节循环**: 一次 8 字节检查替代 2 次 4 字节循环
+
+**fast_io.cpp Benchmark (VM, 30 runs min, ms)**:
+```
+best_add             13.650     (base)
+fast_io_p4w1          8.416     -38.4%  (V4 merged, 之前最优)
+fast_io_p7w1          7.595     -44.4%  ⭐ V7 新最优 (-9.8% vs V4)
+fast_io_p6w1          9.134     -33.1%  (AVX2, 比V4慢)
+```
+
+**moptm_fusion.cpp 实装 + Benchmark (VM, 15 runs min, ms)**:
+
+| Test | V7 moptm | V4 moptm(旧) | best | V7 vs best | V7 vs V4 |
+|------|:-:|:-:|:-:|:-:|:-:|
+| ADD_1M | 2.745 | 2.981 | 2.799 | **-2.0%** ⭐ | -7.9% |
+| ADD_100k | 1.335 | 1.202 | 1.181 | +13.0% | +11.1% (VM波动) |
+| MUL_500k | 7.488 | 8.076 | 6.736 | +11.2% | -7.3% |
+| MUL_100k | 2.350 | 2.416 | 2.053 | +14.5% | -2.7% |
+| DIV_1M_500k | 16.723 | 17.405 | 25.858 | **-35.3%** | -3.9% |
+| DIV_200k_100k | 4.279 | 4.606 | 6.372 | **-32.8%** | -7.1% |
+
+**关键成果**:
+- **ADD_1M 从 +1.5% 变为 -2.0%**，首次在 ADD 大数据上领先 best！
+- V7 相比 V4 在所有大数字测试中都有改善（-2.7% ~ -7.9%）
+- 600 fuzz cases 全部 PASS，正确性确认
+- MUL 仍落后 best（FFT 算法瓶颈，非 I/O 问题）

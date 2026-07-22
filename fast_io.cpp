@@ -463,6 +463,232 @@ done:
     return v;
 }
 
+//=================================================================
+// PARSE VER 6: AVX2 builtin 16-byte parse (pmaddubsw256 + pmaddwd256)
+// Fast path: 16 digits parsed via 3 SIMD instructions (psubb + pmaddubsw + pmaddwd)
+// Fallback: V4 merged for < 16 digits
+// Digit check: SWAR allDigits8 x2 (reuses existing nibble-based check)
+//=================================================================
+#elif PARSE_VER == 6
+
+typedef short v16hi_avx __attribute__((vector_size(32)));
+typedef int v8si_avx __attribute__((vector_size(32)));
+typedef char v32qi_avx __attribute__((vector_size(32)));
+
+// Static const AVX2 vectors (loaded to ymm registers by compiler)
+static const v32qi_avx AVX_ZERO = (v32qi_avx){
+    '0','0','0','0','0','0','0','0',
+    '0','0','0','0','0','0','0','0',
+    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+};
+static const v32qi_avx AVX_MUL1 = (v32qi_avx){
+    10,1,10,1,10,1,10,1, 10,1,10,1,10,1,10,1,
+    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+};
+static const v16hi_avx AVX_MUL2 = (v16hi_avx){
+    100,1,100,1,100,1,100,1, 100,1,100,1,100,1,100,1
+};
+
+static inline int64_t parsePositive(const char* s, size_t& len) {
+    // Fast path: check 16 bytes all digits, then AVX2 parse
+    if (s + 18 <= iEnd) {
+        uint64_t lo, hi;
+        std::memcpy(&lo, s, 8);
+        std::memcpy(&hi, s + 8, 8);
+        if (allDigits8(lo) && allDigits8(hi)) {
+            // 16 digits confirmed: AVX2 parse via psubb + pmaddubsw + pmaddwd
+            v32qi_avx v;
+            std::memcpy(&v, s, 16);
+            v = __builtin_ia32_psubb256(v, AVX_ZERO);
+            v16hi_avx p1 = __builtin_ia32_pmaddubsw256(v, AVX_MUL1);
+            v8si_avx p2 = __builtin_ia32_pmaddwd256(p1, AVX_MUL2);
+            // p2 = [d0d1d2d3, d4d5d6d7, d8d9d10d11, d12d13d14d15, 0,0,0,0]
+            const uint32_t* pp = (const uint32_t*)&p2;
+            // Combine 4 limbs (each 0-9999) into int64
+            // 10^16 < INT64_MAX (9.22*10^18), safe
+            int64_t result = (int64_t)pp[0] * 1000000000000LL
+                           + (int64_t)pp[1] * 100000000LL
+                           + (int64_t)pp[2] * 10000LL
+                           + (int64_t)pp[3];
+            // Check digits 17-18 (scalar, most tokens are <= 18 digits)
+            size_t i = 16;
+            if (s[16] >= '0' && s[16] <= '9') {
+                result = result * 10 + (s[16] - '0');
+                i = 17;
+                if (s[17] >= '0' && s[17] <= '9') {
+                    result = result * 10 + (s[17] - '0');
+                    i = 18;
+                    // Token > 18 digits: SWAR scan for delimiter
+                    while (s + i + 8 <= iEnd) {
+                        uint64_t d;
+                        std::memcpy(&d, s + i, 8);
+                        uint64_t mask = delimiterMask8(d);
+                        if (mask) { i += size_t(__builtin_ctzll(mask)) / 8; goto done; }
+                        i += 8;
+                    }
+                    while (s[i] >= '0' && s[i] <= '9') i++;
+                }
+            }
+        done:
+            len = i;
+            return result;
+        }
+    }
+    // Fallback: V4 merged check+parse for < 16 digits (or near EOF)
+    int64_t v = 0;
+    size_t i = 0;
+    while (i + 4 <= 16) {
+        uint32_t d;
+        std::memcpy(&d, s + i, 4);
+        uint32_t high = d & 0xF0F0F0F0u;
+        if (high != 0x30303030u) break;
+        uint32_t low = d & 0x0F0F0F0Fu;
+        if ((low + 0x06060606u) & 0xF0F0F0F0u) break;
+        uint32_t p = low * 2561u;
+        p = ((p >> 8) & 0x00FF00FFu) * 6553601u;
+        v = v * 10000 + ((p >> 16) & 0xFFFFu);
+        i += 4;
+    }
+    while (i < 18 && s[i] >= '0' && s[i] <= '9') {
+        v = v * 10 + (s[i] - '0');
+        i++;
+    }
+    while (i < 20 && s[i] >= '0' && s[i] <= '9') i++;
+    if (i >= 20) {
+        while (s + i + 8 <= iEnd) {
+            uint64_t d;
+            std::memcpy(&d, s + i, 8);
+            uint64_t mask = delimiterMask8(d);
+            if (mask) { i += size_t(__builtin_ctzll(mask)) / 8; goto done2; }
+            i += 8;
+        }
+        while (s[i] >= '0' && s[i] <= '9') i++;
+    }
+done2:
+    len = i;
+    return v;
+}
+
+//=================================================================
+// PARSE VER 7: 8-byte umask check + ctz length + shift-align SWAR
+// Based on rogeryoungh's swar_64 technique:
+//   umask = u & (u + 0x06..06) & 0xF0..F0
+//   If umask == 0x3030..30: all 8 bytes are digits
+//   Else: dl = ctz(umask ^ 0x3030..30) >> 3 = digit count
+//   Shift align: u <<= 64 - (dl << 3), then SWAR parse 8 bytes
+//   (low bytes become 0x00, nibble=0, treated as digit value 0, no effect)
+// Advantage: one 8-byte check replaces 2x 4-byte loops for 5-8 digit tokens
+//=================================================================
+#elif PARSE_VER == 7
+
+// SWAR parse 8 ASCII digits from uint64 value (no memcpy needed)
+static inline uint64_t parse8SWAR_u64(uint64_t u) {
+    u = (u & 0x0F0F0F0F0F0F0F0FULL) * 2561ULL;
+    u = ((u >> 8) & 0x00FF00FF00FF00FFULL) * 6553601ULL;
+    u = ((u >> 16) & 0x0000FFFF0000FFFFULL) * 42949672960001ULL;
+    return u >> 32;
+}
+
+static inline int64_t parsePositive(const char* s, size_t& len) {
+    if (s + 8 > iEnd) {
+        // Near EOF: scalar fallback
+        int64_t v = 0;
+        size_t i = 0;
+        while (s + i < iEnd && s[i] >= '0' && s[i] <= '9') {
+            v = v * 10 + (s[i] - '0');
+            i++;
+        }
+        len = i;
+        return v;
+    }
+
+    uint64_t u;
+    std::memcpy(&u, s, 8);
+
+    constexpr uint64_t cx30 = 0x3030303030303030ULL;
+    uint64_t umask = u & (u + 0x0606060606060606ULL) & 0xF0F0F0F0F0F0F0F0ULL;
+
+    if (umask == cx30) {
+        // All 8 bytes are digits: parse8 + check more
+        uint64_t r = parse8SWAR_u64(u);
+        size_t i = 8;
+
+        // Check next 8 bytes for digits 9-16
+        if (s + 16 > iEnd) {
+            // Near EOF after 8 digits
+            while (s + i < iEnd && s[i] >= '0' && s[i] <= '9') {
+                r = r * 10 + (s[i] - '0');
+                i++;
+            }
+            len = i;
+            return (int64_t)r;
+        }
+
+        uint64_t u2;
+        std::memcpy(&u2, s + 8, 8);
+        uint64_t umask2 = u2 & (u2 + 0x0606060606060606ULL) & 0xF0F0F0F0F0F0F0F0ULL;
+
+        if (umask2 == cx30) {
+            // 16 digits: parse second 8 and combine
+            uint64_t r2 = parse8SWAR_u64(u2);
+            r = r * 100000000ULL + r2;
+            i = 16;
+            // Check digits 17-18 (scalar, most tokens <= 18 digits)
+            if (s[16] >= '0' && s[16] <= '9') {
+                r = r * 10 + (s[16] - '0');
+                i = 17;
+                if (s[17] >= '0' && s[17] <= '9') {
+                    r = r * 10 + (s[17] - '0');
+                    i = 18;
+                    // Token > 18 digits: SWAR scan for delimiter
+                    while (s + i + 8 <= iEnd) {
+                        uint64_t d;
+                        std::memcpy(&d, s + i, 8);
+                        uint64_t mask = delimiterMask8(d);
+                        if (mask) { i += size_t(__builtin_ctzll(mask)) / 8; goto done7; }
+                        i += 8;
+                    }
+                    while (s[i] >= '0' && s[i] <= '9') i++;
+                }
+            done7:
+                len = i;
+                return (int64_t)r;
+            }
+            len = i;
+            return (int64_t)r;
+        } else {
+            // 8 + (0-7) digits: shift-align second chunk
+            uint64_t dl2 = __builtin_ctzll(umask2 ^ cx30) >> 3;
+            if (dl2 > 0) {
+                u2 <<= 64 - (dl2 << 3);
+                uint64_t r2 = parse8SWAR_u64(u2);
+                static const uint64_t p10[] = {1, 10, 100, 1000, 10000,
+                                               100000, 1000000, 10000000};
+                r = r * p10[dl2] + r2;
+                i = 8 + dl2;
+            }
+            len = i;
+            return (int64_t)r;
+        }
+    }
+
+    // Not all 8 bytes are digits: compute length via ctz
+    uint64_t dl = __builtin_ctzll(umask ^ cx30) >> 3;
+    if (dl == 0) {
+        // First byte not a digit (shouldn't happen in valid input)
+        len = 0;
+        return 0;
+    }
+
+    // Shift align + SWAR parse (rogeryoungh technique)
+    // After shift, low (8-dl) bytes become 0x00, nibble=0, treated as digit 0
+    u <<= 64 - (dl << 3);
+    uint64_t r = parse8SWAR_u64(u);
+
+    len = dl;
+    return (int64_t)r;
+}
+
 #endif // PARSE_VER
 
 //=================================================================
