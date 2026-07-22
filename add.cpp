@@ -4552,21 +4552,36 @@ int main() {
 #endif
         const char *sa = iCursor;
         size_t la;
-        int64_t va = parsePositiveUntilNondigit(sa, la);
-        iCursor = sa + la;
+        int64_t va;
+        // FIX: parsePositiveUntilNondigit 不处理负号, 负数用 swarTokenLen 获取 token
+        if (sa < iEnd && *sa == '-') {
+            la = swarTokenLen(iCursor);
+            iCursor += la;
+            va = 0;
+        } else {
+            va = parsePositiveUntilNondigit(sa, la);
+            iCursor = sa + la;
+        }
         if (iCursor < iEnd && *iCursor < 0x21) iCursor++;  // skip space
 
         const char *sb = iCursor;
         size_t lb;
-        int64_t vb = parsePositiveUntilNondigit(sb, lb);
-        iCursor = sb + lb;
+        int64_t vb;
+        if (sb < iEnd && *sb == '-') {
+            lb = swarTokenLen(iCursor);
+            iCursor += lb;
+            vb = 0;
+        } else {
+            vb = parsePositiveUntilNondigit(sb, lb);
+            iCursor = sb + lb;
+        }
         if (iCursor < iEnd && *iCursor < 0x21) iCursor++;  // skip newline
 #ifdef PROFILE_DIV
         auto _p1 = std::chrono::high_resolution_clock::now();
         t_read += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
 #endif
         // Check if both tokens are positive <= 18 digits (fast path)
-        if (la > 0 && la <= 18 && lb > 0 && lb <= 18) {
+        if (la > 0 && la <= 18 && lb > 0 && lb <= 18 && sa[0] != '-' && sb[0] != '-') {
             // va + vb < 2*10^18 < INT64_MAX, no overflow
 #ifdef PROFILE_DIV
             auto _p2 = std::chrono::high_resolution_clock::now();
@@ -4579,12 +4594,7 @@ int main() {
 #endif
         } else {
             // Slow path: negative, or > 18 digits → use Integer
-            // Re-read tokens via readToken for correct handling (handles '-' etc)
-            // sa/sb/la/lb already point to correct positions
-            if (sa[0] != '-' && sb[0] != '-' && la <= 18 && lb <= 18) {
-                // shouldn't reach here (caught by fast path), but be safe
-                writeI64(va + vb);
-            } else if (tryParseI64Unchecked(sa, la, va) && tryParseI64Unchecked(sb, lb, vb)) {
+            if (tryParseI64Unchecked(sa, la, va) && tryParseI64Unchecked(sb, lb, vb)) {
                 writeI64(va + vb);
             } else {
                 a.fromCharRange(sa, sa + la);
