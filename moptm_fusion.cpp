@@ -4072,6 +4072,7 @@ namespace {
 
     // === ADD 小数字快速路径: T 大但数字短 (LC small_00: T=200000, 数字 1-18 位) ===
     // 尝试解析 <= 18 位数字为 int64, 跳过 Integer 对象开销
+    // OPT: 4 字节一组 parse (str4toi), 乘法次数 18→5, 串行依赖链长度 18→5
     static inline bool tryParseI64(const char *start, size_t len, int64_t &val) {
         if (len == 0 || len > 19) return false;
         bool neg = false;
@@ -4083,35 +4084,64 @@ namespace {
         }
         size_t digit_len = len - i;
         if (digit_len == 0 || digit_len > 18) return false;
+        // 验证所有字符都是数字 (向量化, 无串行依赖)
+        for (size_t j = i; j < len; j++) {
+            if (start[j] < '0' || start[j] > '9') return false;
+        }
+        // 4 字节一组 parse (已验证, str4toi 减少 64-bit 乘法次数)
         int64_t v = 0;
-        for (; i < len; i++) {
-            char c = start[i];
-            if (c < '0' || c > '9') return false;
-            v = v * 10 + (c - '0');
+        while (len - i >= 4) {
+            v = v * 10000 + hint::str4toi(start + i);
+            i += 4;
+        }
+        while (i < len) {
+            v = v * 10 + (start[i] - '0');
+            i++;
         }
         val = neg ? -v : v;
         return true;
     }
 
     // int64 转字符串写入 oBuffer (无 Integer 开销)
+    // OPT: 10000 进制分解 + outTable 查表, 除法次数 18→5
     static inline void writeI64(int64_t val) {
         if (val == 0) { *oCursor++ = '0'; return; }
-        bool neg = false;
         uint64_t uv;
-        if (val < 0) {
-            neg = true;
+        bool neg = val < 0;
+        if (neg) {
+            *oCursor++ = '-';
             uv = uint64_t(-(val + 1)) + 1;
         } else {
             uv = uint64_t(val);
         }
-        char tmp[20];
-        int pos = 0;
-        while (uv > 0) {
-            tmp[pos++] = char('0' + uv % 10);
-            uv /= 10;
+        // 10000 进制分解: 低位 → 高位, 最多 5 组 (18 位 = 4+4+4+4+2)
+        uint32_t limbs[5];
+        int n = 0;
+        while (uv >= 10000) {
+            limbs[n++] = uint32_t(uv % 10000);
+            uv /= 10000;
         }
-        if (neg) *oCursor++ = '-';
-        while (pos > 0) *oCursor++ = tmp[--pos];
+        limbs[n++] = uint32_t(uv); // 最高位 (1-4 位)
+        // 输出最高位 (不补前导零)
+        uint32_t high = limbs[n - 1];
+        if (high < 10) {
+            *oCursor++ = char('0' + high);
+        } else if (high < 100) {
+            *oCursor++ = char('0' + high / 10);
+            *oCursor++ = char('0' + high % 10);
+        } else if (high < 1000) {
+            *oCursor++ = char('0' + high / 100);
+            *oCursor++ = char('0' + high / 10 % 10);
+            *oCursor++ = char('0' + high % 10);
+        } else {
+            std::memcpy(oCursor, &hint::outTable.t[high], 4);
+            oCursor += 4;
+        }
+        // 输出其余位 (补前导零, 查表 4 字节/次)
+        for (int j = n - 2; j >= 0; j--) {
+            std::memcpy(oCursor, &hint::outTable.t[limbs[j]], 4);
+            oCursor += 4;
+        }
     }
 
     // 从 iCursor 读 token (不解析), 推进游标, 返回 token 起始指针和长度
@@ -4138,8 +4168,11 @@ int main() {
     hint::Integer a, b;
 #ifdef BENCH_INTERNAL
     // 内部计时模式: 读1对, 循环计算 N 次, 每次单独计时
+    auto tp0 = std::chrono::high_resolution_clock::now();
     parseInteger(a);
     parseInteger(b);
+    auto tp1 = std::chrono::high_resolution_clock::now();
+    double t_parse = std::chrono::duration<double, std::milli>(tp1 - tp0).count();
     // warmup
     hint::Integer c;
     for (int i = 0; i < 3; i++) { c = a; c += b; }
@@ -4155,11 +4188,14 @@ int main() {
         total += times[i];
     }
     std::sort(times, times + N);
-    fprintf(stderr, "MIN: %.3f  MED: %.3f  AVG: %.3f  MAX: %.3f  TOTAL: %.3f\n",
-            times[0], times[N/2], total/N, times[N-1], total);
+    auto tw0 = std::chrono::high_resolution_clock::now();
     writeHint(c);
     *oCursor++ = '\n';
     flushOutput();
+    auto tw1 = std::chrono::high_resolution_clock::now();
+    double t_write = std::chrono::duration<double, std::milli>(tw1 - tw0).count();
+    fprintf(stderr, "PARSE: %.3f  ADD_MIN: %.3f  ADD_MED: %.3f  WRITE: %.3f\n",
+            t_parse, times[0], times[N/2], t_write);
     return 0;
 #endif
 #ifdef PROFILE_DIV
