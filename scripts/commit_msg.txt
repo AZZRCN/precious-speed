@@ -1,0 +1,8 @@
+opt(mul): basicMul BASE=10^8 packing - 4x less bruteforce work
+
+Pack pairs of BASE=10^4 uint16_t limbs into BASE=10^8 uint32_t limbs
+before bruteforce multiply, halving limb count and reducing O(n^2)
+work by 4x. Unpack back to BASE=10^4 after multiplication.
+
+medium_0: 38.7ms -> 29.1ms (-24.8%)
+10000 fuzz cases PASS, thr=64 still optimal.
