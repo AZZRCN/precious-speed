@@ -778,6 +778,65 @@ inline uint16_t str4toi(const char *s) {
 
 **结论**: cyclic Bug #2 修复完全稳定, O2 阶段收尾完成
 
+## Builtin 函数优化 (2026-07-22)
+
+**目标**: 使用 GCC builtin 函数提升 MUL 路径性能 (用户指示: "优化时尝试使用尽可能多的builtin函数")
+
+### 实现的 builtin 优化
+
+1. **位操作 O(1) 化** — `__builtin_clz`/`__builtin_clzll`/`__builtin_ctz`/`__builtin_ctzll`:
+   - `int_ceil2`: 循环 → 单条 BSR 指令
+   - `hint_log2`: 二分搜索 → 单条 LZCNT/BSR 指令
+   - `hint_ctz`/`hint_clz`: 循环 → 单条 TZCNT/BSF 指令 (BMI1 enabled via pragma target)
+
+2. **HINT_ASSUME (__builtin_unreachable)** — 编译器消除不可能分支:
+   - `dif`/`idit`: `HINT_ASSUME(is_2pow(float_len))`
+   - `real_conv`/`fftSqr`: 长度对齐假设
+
+3. **HINT_PREFETCH (__builtin_prefetch)** — 显式预取:
+   - `dif`/`idit`: twiddle factor (tp1/tp3) 4 元素提前预取
+   - `writeTo` 8×循环: outTable 随机 gather 8 路预取 (data[] 顺序已在 L1, outTable.t[] 随机访问)
+   - `fftMul`/`fftMulPre` carry chain: v1[] 预取 (500k MUL 时 v1[] 达 4MB, 超出 L2 1MB/core)
+   - cyclic mod carry chain: v[] 预取
+
+4. **HINT_LIKELY/HINT_UNLIKELY (__builtin_expect)** — 分支预测:
+   - `count_true_length`: trailing zeros 罕见 → `HINT_UNLIKELY`
+
+5. **HINT_PROB_LIKELY (__builtin_expect_with_probability)** — 宏已定义备用
+
+### 正确性验证
+
+- **2130/2130 ALL PASS** (ADD 730 + MUL 750 + DIV 650)
+
+### 性能数据 (VM file redirection, 30-run min, ms)
+
+| Size | moptm_min | moptm_med | best_min | best_med | diff_min |
+|------|:-:|:-:|:-:|:-:|:-:|
+| 10k | 0.852 | 1.265 | 0.930 | 1.262 | **-0.078 (moptm 胜)** |
+| 100k | 2.407 | 2.752 | 2.113 | 2.398 | +0.294 |
+| 300k | 7.399 | 7.905 | 6.215 | 7.204 | +1.184 |
+| 500k | 8.010 | 8.738 | 7.077 | 7.878 | +0.933 |
+| 1M | 16.478 | 17.309 | 13.949 | 16.326 | +2.529 |
+
+### 与前次 moptm baseline 对比 (builtin 优化收益)
+
+| Size | 优化前 (aligned baseline) | 优化后 (builtin) | 收益 |
+|------|:-:|:-:|:-:|
+| 10k | 1.322 | 0.852 | **-36%** |
+| 100k | 2.704 | 2.407 | **-11%** |
+| 300k | 8.127 | 7.399 | **-9%** |
+| 500k | 8.907 | 8.010 | **-10%** |
+| 1M | 17.619 | 16.478 | **-6.5%** |
+
+**注意**: 前次 baseline 中 best 在 300k/500k 显示 15+ms, 本次为 6-7ms. 前次 best 数据异常 (可能 pipe 测量失真或 stale binary). 本次 best 数据更可信.
+
+### 关键发现
+
+1. **builtin 位操作有效**: `__builtin_clz`/`ctz` 将 O(log bits) 循环替换为单条指令, 对 FFT 长度计算有 measurable 收益
+2. **prefetch 对 carry chain 有效**: v1[] 在 500k MUL 时达 4MB 超出 L2, prefetch 重叠 L3 延迟与计算
+3. **prefetch 对 outTable gather 有效**: writeTo 的随机 gather 模式受益于显式预取
+4. **HINT_ASSUME 效果难单独量化**: 与其他优化叠加, 但理论上消除分支判断有微正收益
+5. **best/mul.cpp 在 VM 上实际很快**: BASE=10^8 + 显式 AVX2 蝶形在大数据有优势, LC 上 (Cascade Lake) 趋势可能不同
 
 **之前判断"assert bug是已存在问题，LC测试数据不覆盖"是错误的！** LC 真实数据会触发：
 

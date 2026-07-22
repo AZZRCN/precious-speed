@@ -57,6 +57,27 @@ namespace hint
 
     constexpr size_t FFT_MAX_LEN = size_t(1) << 23;
 
+    // Builtin helper macros — use long-named GCC builtins for optimization
+    // HINT_ASSUME: hint compiler that cond is always true (via __builtin_unreachable),
+    //   enables dead-code elimination, bounds-check removal, power-of-2 strength reduction
+    // HINT_PREFETCH: __builtin_prefetch wrapper for explicit cache control
+    // HINT_PROB_LIKELY / HINT_PROB_UNLIKELY: __builtin_expect_with_probability for
+    //   precise branch prediction with known probability (GCC 9+)
+#ifndef HINT_ASSUME
+#define HINT_ASSUME(cond) do { if (!(cond)) __builtin_unreachable(); } while(0)
+#endif
+#ifndef HINT_PREFETCH
+#define HINT_PREFETCH(addr, rw, locality) __builtin_prefetch((addr), (rw), (locality))
+#endif
+#ifndef HINT_PROB_LIKELY
+#define HINT_PROB_LIKELY(x, p)   __builtin_expect_with_probability(!!(x), 1, (p))
+#define HINT_PROB_UNLIKELY(x, p) __builtin_expect_with_probability(!!(x), 0, (p))
+#endif
+#ifndef HINT_LIKELY
+#define HINT_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define HINT_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
     // 32-byte aligned allocator for AVX2 FFT buffers
     // posix_memalign guarantees 32-byte alignment, enabling _mm256_load_pd/_mm256_store_pd
     // and __builtin_assume_aligned hints to the compiler
@@ -101,13 +122,13 @@ namespace hint
     template <typename T>
     constexpr T int_ceil2(T n)
     {
-        constexpr int bits = sizeof(n) * 8;
-        n--;
-        for (int i = 1; i < bits; i *= 2)
-        {
-            n |= (n >> i);
-        }
-        return n + 1;
+        if (n <= 1)
+            return 1;
+        // __builtin_clzll: O(1) vs O(log bits) loop, one BSR instruction on x86
+        if constexpr (sizeof(T) <= 4)
+            return T(2) << (31 - __builtin_clz(uint32_t(n - 1)));
+        else
+            return T(2) << (63 - __builtin_clzll(uint64_t(n - 1)));
     }
 
     template <typename IntTy>
@@ -120,122 +141,45 @@ namespace hint
     template <typename T>
     constexpr int hint_log2(T n)
     {
-        constexpr int bits = sizeof(n) * 8;
-        int l = -1, r = bits;
-        while ((l + 1) != r)
-        {
-            int mid = (l + r) / 2;
-            if ((T(1) << mid) > n)
-            {
-                r = mid;
-            }
-            else
-            {
-                l = mid;
-            }
-        }
-        return l;
+        if (n <= 0)
+            return -1;
+        // __builtin_clz: O(1) vs O(log bits) binary search, one LZCNT/BSR instruction
+        if constexpr (sizeof(T) <= 4)
+            return 31 - __builtin_clz(uint32_t(n));
+        else
+            return 63 - __builtin_clzll(uint64_t(n));
     }
     constexpr int hint_ctz(uint32_t x)
     {
-        int r0 = 31;
-        x &= (0 - x);
-        if (x & 0x55555555)
-        {
-            r0 &= ~1;
-        }
-        if (x & 0x33333333)
-        {
-            r0 &= ~2;
-        }
-        if (x & 0x0F0F0F0F)
-        {
-            r0 &= ~4;
-        }
-        if (x & 0x00FF00FF)
-        {
-            r0 &= ~8;
-        }
-        if (x & 0x0000FFFF)
-        {
-            r0 &= ~16;
-        }
-        r0 += (x == 0);
-        return r0;
+        // __builtin_ctz: O(1) TZCNT/BSF instruction (BMI1 enabled via pragma target)
+        if (x == 0)
+            return 32;
+        return __builtin_ctz(x);
     }
 
     constexpr int hint_ctz(uint64_t x)
     {
-        int r0 = 63;
-        x &= (0 - x);
-        if (x & 0x5555555555555555)
-        {
-            r0 &= ~1; 
-        }
-        if (x & 0x3333333333333333)
-        {
-            r0 &= ~2; 
-        }
-        if (x & 0x0F0F0F0F0F0F0F0F)
-        {
-            r0 &= ~4; 
-        }
-        if (x & 0x00FF00FF00FF00FF)
-        {
-            r0 &= ~8; 
-        }
-        if (x & 0x0000FFFF0000FFFF)
-        {
-            r0 &= ~16; 
-        }
-        if (x & 0x00000000FFFFFFFF)
-        {
-            r0 &= ~32; 
-        }
-        r0 += (x == 0);
-        return r0;
+        // __builtin_ctzll: O(1) TZCNT/BSF instruction (BMI1 enabled via pragma target)
+        if (x == 0)
+            return 64;
+        return __builtin_ctzll(x);
     }
 
-    
+
     constexpr int hint_clz(uint32_t x)
     {
-        constexpr uint32_t MASK32 = uint32_t(0xFFFF) << 16;
-        int res = sizeof(uint32_t) * CHAR_BIT;
-        if (x & MASK32)
-        {
-            res -= 16;
-            x >>= 16;
-        }
-        if (x & (MASK32 >> 8))
-        {
-            res -= 8;
-            x >>= 8;
-        }
-        if (x & (MASK32 >> 12))
-        {
-            res -= 4;
-            x >>= 4;
-        }
-        if (x & (MASK32 >> 14))
-        {
-            res -= 2;
-            x >>= 2;
-        }
-        if (x & (MASK32 >> 15))
-        {
-            res -= 1;
-            x >>= 1;
-        }
-        return res - x;
+        // __builtin_clz: O(1) LZCNT/BSR instruction (LZCNT enabled via pragma target)
+        if (x == 0)
+            return 32;
+        return __builtin_clz(x);
     }
-    
+
     constexpr int hint_clz(uint64_t x)
     {
-        if (x & (uint64_t(0xFFFFFFFF) << 32))
-        {
-            return hint_clz(uint32_t(x >> 32));
-        }
-        return hint_clz(uint32_t(x)) + 32;
+        // __builtin_clzll: O(1) LZCNT/BSR instruction (LZCNT enabled via pragma target)
+        if (x == 0)
+            return 64;
+        return __builtin_clzll(x);
     }
 
     
@@ -596,6 +540,7 @@ namespace hint
                 template <bool RIRI_IN>
                 void dif(Float inout[], size_t float_len)
                 {
+                    HINT_ASSUME(is_2pow(float_len));
                     if (float_len <= 8)
                     {
                         difSmall<RIRI_IN>(inout, float_len);
@@ -610,6 +555,10 @@ namespace hint
                     auto it = reinterpret_cast<C2 *>(inout);
                     for (auto end = it + stride1; it < end; it++, tp1++, tp3++)
                     {
+                        // __builtin_prefetch: overlap next iteration's twiddle factor fetch
+                        // with current iteration's computation (tp1/tp3 are sequential, L1 likely)
+                        HINT_PREFETCH(tp1 + 4, 0, 1);
+                        HINT_PREFETCH(tp3 + 4, 0, 1);
                         C2 c0 = it[0], c1 = it[stride1], c2 = it[stride2], c3 = it[stride3];
                         if (RIRI_IN)
                         {
@@ -626,6 +575,7 @@ namespace hint
                 template <bool RIRI_OUT>
                 void idit(Float inout[], size_t float_len)
                 {
+                    HINT_ASSUME(is_2pow(float_len));
                     if (float_len <= 8)
                     {
                         iditSmall<RIRI_OUT>(inout, float_len);
@@ -644,6 +594,9 @@ namespace hint
                     auto it = reinterpret_cast<C2 *>(inout);
                     for (auto end = it + stride1; it < end; it++, tp1++, tp3++)
                     {
+                        // __builtin_prefetch: overlap next iteration's twiddle factor fetch
+                        HINT_PREFETCH(tp1 + 4, 0, 1);
+                        HINT_PREFETCH(tp3 + 4, 0, 1);
                         C2 c0 = it[0], c1 = it[stride1], c2 = it[stride2].mulConj(tp1[0]), c3 = it[stride3].mulConj(tp3[0]);
                         iditSplit(c0.real, c0.imag, c1.real, c1.imag, c2.real, c2.imag, c3.real, c3.imag);
                         if (RIRI_OUT)
@@ -971,6 +924,8 @@ namespace hint
             {
                 assert(is_2pow(float_len));
                 assert(float_len <= FFT_MAX_LEN * 2);
+                HINT_ASSUME(is_2pow(float_len));
+                HINT_ASSUME(float_len >= 16);
                 auto &fft = getSharedFFT<Float>();
                 fft.expand(float_len);
                 fft.template dif<true>(in_out1, float_len);
@@ -1172,7 +1127,8 @@ namespace hint
         {
             return 0;
         }
-        while (length > 0 && array[length - 1] == 0)
+        // __builtin_expect: trailing zeros are rare for most inputs — hint unlikely
+        while (length > 0 && HINT_UNLIKELY(array[length - 1] == 0))
         {
             length--;
         }
@@ -1476,9 +1432,24 @@ namespace hint
             size_t i = data.size() - 1;
             // OPT-3: AVX2 8× 展开, 一次输出 32 字节 = 8 个 limb
             // 用标量 store 直接写输出, 避免 _mm256_set_epi32 的 8 次 vmovd+vinserti128 开销
+            // __builtin_prefetch: outTable.t[data[k]] is a data-dependent random gather
+            //   into 40KB table — hardware prefetcher cannot predict. Explicit prefetch
+            //   of next batch's entries overlaps L2 latency (~10 cycles) with current work.
 #if defined(__AVX2__)
             while (i >= 8)
             {
+                // Prefetch next batch's table entries (data[] is sequential, already in L1)
+                if (i >= 16)
+                {
+                    HINT_PREFETCH(&outTable.t[data[i - 9]], 0, 0);
+                    HINT_PREFETCH(&outTable.t[data[i - 10]], 0, 0);
+                    HINT_PREFETCH(&outTable.t[data[i - 11]], 0, 0);
+                    HINT_PREFETCH(&outTable.t[data[i - 12]], 0, 0);
+                    HINT_PREFETCH(&outTable.t[data[i - 13]], 0, 0);
+                    HINT_PREFETCH(&outTable.t[data[i - 14]], 0, 0);
+                    HINT_PREFETCH(&outTable.t[data[i - 15]], 0, 0);
+                    HINT_PREFETCH(&outTable.t[data[i - 16]], 0, 0);
+                }
                 uint32_t* p32 = reinterpret_cast<uint32_t*>(p);
                 p32[0] = outTable.t[data[i - 1]];
                 p32[1] = outTable.t[data[i - 2]];
@@ -1967,8 +1938,6 @@ namespace hint
         }
         static void fftMul(View in1, View in2, Span out)
         {
-            
-            
             size_t len1 = count_true_length(in1.ptr, in1.size);
             size_t len2 = count_true_length(in2.ptr, in2.size);
             if (len1 == 0 || len2 == 0)
@@ -1977,6 +1946,8 @@ namespace hint
                 return;
             }
             size_t conv_len = len1 + len2 - 1, float_len = int_ceil2(conv_len);
+            HINT_ASSUME(is_2pow(float_len));
+            HINT_ASSUME(float_len >= conv_len);
             
             thread_local AlignedVec32<double> tv1, tv2;
             if (tv1.size() < float_len)
@@ -1993,6 +1964,11 @@ namespace hint
             size_t i = 0;
             for (; i + 7 < conv_len; i += 8)
             {
+                // __builtin_prefetch: v1[] can be 4MB (500k MUL), exceeds L2 (1MB/core).
+                //   Prefetch 2 batches ahead (128 bytes) to overlap L3 latency (~40 cycles)
+                //   with carry chain serial dependency (~24 cycles per 8× iteration).
+                HINT_PREFETCH(v1 + i + 16, 0, 0);
+                HINT_PREFETCH(v1 + i + 24, 0, 0);
                 // Barrett: q=divBASE(s); out=s-q*BASE; next_s=q+v[i+1]
                 // was: s1 = s0 / BASE + ...; out[i] = s0 % BASE; carry = s7 / BASE;
                 uint64_t s0 = carry + uint64_t(v1[i]   + 0.5);
@@ -2037,7 +2013,6 @@ namespace hint
         }
         static void fftSqr(View in, Span out)
         {
-            
             size_t len = count_true_length(in.ptr, in.size);
             if (len == 0)
             {
@@ -2045,6 +2020,8 @@ namespace hint
                 return;
             }
             size_t conv_len = len * 2 - 1, float_len = int_ceil2(conv_len);
+            HINT_ASSUME(is_2pow(float_len));
+            HINT_ASSUME(float_len >= conv_len);
             
             thread_local AlignedVec32<double> tv;
             if (tv.size() < float_len)
@@ -2057,6 +2034,9 @@ namespace hint
             size_t i = 0;
             for (; i + 7 < conv_len; i += 8)
             {
+                // __builtin_prefetch: overlap L3 latency with carry chain computation
+                HINT_PREFETCH(v + i + 16, 0, 0);
+                HINT_PREFETCH(v + i + 24, 0, 0);
                 // Barrett: q=divBASE(s); out=s-q*BASE; next_s=q+v[i+1]
                 // was: s1 = s0 / BASE + ...; out[i] = s0 % BASE; carry = s7 / BASE;
                 uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
@@ -2226,8 +2206,6 @@ namespace hint
         
         static void fftMulPre(View a, const double *b_dft, size_t b_len, size_t float_len, Span out)
         {
-            
-            
             size_t a_len = count_true_length(a.ptr, a.size);
             if (a_len == 0)
             {
@@ -2236,6 +2214,8 @@ namespace hint
             }
             size_t conv_len = a_len + b_len - 1;
             assert(float_len >= conv_len);
+            HINT_ASSUME(is_2pow(float_len));
+            HINT_ASSUME(float_len >= conv_len);
             thread_local AlignedVec32<double> tv;
             if (tv.size() < float_len)
                 tv.resize(float_len);
@@ -2251,6 +2231,9 @@ namespace hint
             size_t i = 0;
             for (; i + 7 < conv_len; i += 8)
             {
+                // __builtin_prefetch: overlap L3 latency with carry chain computation
+                HINT_PREFETCH(v + i + 16, 0, 0);
+                HINT_PREFETCH(v + i + 24, 0, 0);
                 // Barrett: q=divBASE(s); out=s-q*BASE; next_s=q+v[i+1]
                 // was: s1 = s0 / BASE + ...; out[i] = s0 % BASE; carry = s7 / BASE;
                 uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
@@ -2446,6 +2429,9 @@ namespace hint
             size_t i = 0;
             for (; i + 7 < m; i += 8)
             {
+                // __builtin_prefetch: overlap L3 latency with carry chain computation
+                HINT_PREFETCH(v + i + 16, 0, 0);
+                HINT_PREFETCH(v + i + 24, 0, 0);
                 uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
                 uint64_t q0 = divBASE(s0);
                 uint64_t s1 = q0 + uint64_t(v[i+1] + 0.5);
