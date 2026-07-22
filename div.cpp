@@ -3240,10 +3240,16 @@ namespace hint
             // 1. 计算近似逆: divisor 高 in 位的精确逆
             // absInvNewton(divisor_high, inv) = floor(B^(2*in) / divisor_high), 输出 in+1 位
             // inv * divisor_high ≈ B^(2*in), inv ≈ B^(len2+in) / divisor
+            //
+            // OPT: inv 精度提升 — 多算 inv_extra 位, 截断后 inv 误差从 ±1 降到 ±1/B^inv_extra
+            //   避免 qhat top_limb != 0 触发 basicMul fallback (burnikel_01: 251 次/64.5ms → 0)
+            //   inv_float_len 不变 (int_ceil2(2*(in+2)+1) == int_ceil2(2*in+1) 对绝大多数 in)
             thread_local std::vector<Limb> t_inv;
-            size_t inv_size = in + 1;
+            const size_t inv_extra = (in + 2 <= len2) ? 2 : 0;
+            size_t inv_size = in + 1 + inv_extra;
             if (t_inv.size() < inv_size) t_inv.resize(inv_size);
-            Span inv_span(t_inv.data(), inv_size);
+            Span inv_span_full(t_inv.data(), inv_size);      // 完整 inv (含冗余低位)
+            Span inv_span(t_inv.data() + inv_extra, in + 1); // 实际使用的高 in+1 位
 
             // 2. DFT 预计算
             // fftMulPre #1: divid_high(this_in+1) * inv(in+1), 卷积长度 <= 2*in+1
@@ -3302,7 +3308,14 @@ namespace hint
             {
                 // GMP 风格 Newton 逆 (默认启用): 1M/500k 实测 17.68ms vs absInvNewton 18.88ms (-6.3%)
                 // CYCLIC_MIN_K=4096 阈值保证; k<4096 时 absInvNewtonGMP 内部回退到 absInvNewton 逻辑
-                absInvNewtonGMP(divisor + (len2 - in), inv_span);
+                if (inv_extra > 0) {
+                    // inv 精度提升: m 长度 in+inv_extra → inv 长度 in+1+inv_extra
+                    // 截断低 inv_extra 位后, inv 误差 ±1 → ±1/B^inv_extra
+                    // 避免 qhat top_limb != 0 触发 basicMul fallback
+                    absInvNewtonGMP(divisor + (len2 - in - inv_extra), inv_span_full);
+                } else {
+                    absInvNewtonGMP(divisor + (len2 - in), inv_span);
+                }
 #ifndef DISABLE_2NXN_CYCLIC
                 if (use_cyclic) {
                     prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
@@ -3379,10 +3392,28 @@ namespace hint
                 // Recompute divid_high * inv with exact basicMul.
                 // Triggers mainly for adversarial inputs (e.g. burnikel_ziegler_bound);
                 // for random inputs FFT is exact, so performance impact is negligible.
+                bool _fallback_triggered = false;
+#ifdef PROFILE_DIV
+                auto _fb_t0 = std::chrono::high_resolution_clock::now();
+#endif
                 if (qhat_span.size > 0 && qhat_span[qhat_span.size - 1] != Limb(0))
                 {
+                    _fallback_triggered = true;
+#ifdef PROFILE_DIV
+                    Limb _fb_top = qhat_span[qhat_span.size - 1];
+                    PROF_PRINT("  [prof]   block %zu: basicMul FALLBACK top_limb=%u (divid_high=%zu, inv=%zu)\n",
+                            (qn - qn_remaining) / in, unsigned(_fb_top), divid_high.size, inv_span.size);
+#endif
                     basicMul(divid_high, inv_span, qhat_full);
                 }
+#ifdef PROFILE_DIV
+                auto _fb_t1 = std::chrono::high_resolution_clock::now();
+                if (_fallback_triggered) {
+                    PROF_PRINT("  [prof]   block %zu: basicMul FALLBACK triggered (divid_high=%zu, inv=%zu): %.3f ms\n",
+                            (qn - qn_remaining) / in, divid_high.size, inv_span.size,
+                            std::chrono::duration<double, std::milli>(_fb_t1 - _fb_t0).count());
+                }
+#endif
 
                 // prod = divisor * qhat, 长度 = len2 + this_in + 1
                 size_t prod_len = len2 + qhat_span.size;
