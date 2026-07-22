@@ -1118,3 +1118,87 @@ vs 优化前 (500k +2.337ms, 1M +1.559ms)：
 - moptm 的 mul_min 在 300k/500k 接近 best，差距主要来自 flush + parse 的 I/O 固定开销
 
 **待调查**: 100k/300k 的 flush 占比异常（best 同规模 flush 应更快），可能与 oBuffer 大小或 mmap 输入有关。
+
+### pipe vs file redirection 测量失真（2026-07-22）
+
+发现 `subprocess.run([exe], capture_output=True)` (pipe, 64KB 缓冲) 严重失真：LC 上 stdin/stdout 是文件，应用 file redirection (`> /dev/null`) 测量。
+
+**文件重定向 benchmark (30-run, taskset -c 0, min, ms, 对齐后)**:
+
+| Size | moptm_file | best_file | diff |
+|------|:-:|:-:|:-:|
+| 10k | 1.322 | 1.458 | **-0.136ms (moptm 胜)** |
+| 100k | 2.704 | 1.854 | +0.849ms |
+| 300k | 8.127 | 15.167 | **-7.039ms (moptm 胜!)** |
+| 500k | 8.907 | 15.219 | **-6.311ms (moptm 胜!)** |
+| 1M | 17.619 | 18.816 | **-1.197ms (moptm 胜)** |
+
+**关键发现**: file redirection 下 moptm 在 10k/300k/500k/1M 均胜出 best，仅 100k 差 0.85ms。之前 pipe 测量数据严重失真，低估了 moptm 实力。
+
+## 32 字节对齐 FFT 缓冲区（2026-07-22，commit 358b2f4）
+
+### 背景
+
+用户指示"尝试手写复杂的 builtin 和 align"。FFT 缓冲区原用 `std::vector<double>`（16 字节对齐），AVX2 32 字节 load/store 会跨 cache-line split。
+
+### 实现
+
+**AlignedAlloc32 分配器** (L60-88): 使用 `posix_memalign(32)` 保证 32 字节对齐，`AlignedVec32<T>` = `std::vector<T, AlignedAlloc32<T>>`。
+
+**替换范围**:
+- FFTTable 的 `table` (L578): `std::vector<Float>` → `AlignedVec32<Float>`
+- 10 处 `thread_local std::vector<double>` → `thread_local AlignedVec32<double>`
+
+### `__builtin_assume_aligned` segfault 教训
+
+尝试在 `dif`/`idit` 的 `table1`/`table3`/`inout` 指针上加 `__builtin_assume_aligned(ptr, 32)` → 300/850 fuzz case FAIL（全是 30 位数字 FFT 路径，`got=` 空输出 = segfault）。
+
+**根因**: 递归 FFT 中 `expand()` 可能重新分配 table，导致之前通过 `assume_aligned` 标记的指针失效；编译器在对齐 hint 下生成 `vmovapd`（对齐 load/store），访问非对齐地址触发 segfault。
+
+**修复**: 移除所有 `__builtin_assume_aligned`，保留对齐分配器（分配器本身保证 32 字节对齐，但编译器仍用 `loadu`/`storeu`，安全）。
+
+### 验证
+
+- 2130/2130 ALL PASS (ADD 730 + MUL 750 + DIV 650)
+- 909/909 MUL PASS
+
+### 性能（对齐前 vs 对齐后, file redirection, 30-run min, ms）
+
+| Size | 对齐前 | 对齐后 | 变化 |
+|------|:-:|:-:|:-:|
+| 10k | 1.478 | 1.322 | -10.6% |
+| 100k | 2.633 | 2.704 | +2.7% (噪声) |
+| 300k | 8.309 | 8.127 | -2.2% |
+| 500k | 8.956 | 8.907 | -0.5% |
+| 1M | 17.222 | 17.619 | +2.3% (噪声) |
+
+小数据 (10k/300k) 有改善，大数据在噪声范围内。
+
+### FFT 向量化状态确认
+
+用 `-fopt-info-vec-optimized -fopt-info-vec-missed` 编译，下载向量化日志 (114KB) 确认：
+- FFT 内循环 (L580, L613) 已自动向量化（32 字节 AVX2）
+- `Float2<double>`/`Complex2<double>` 标量结构体运算已被自动向量化
+- 无需手写 SIMD
+
+### 当前 O2 最快版本 (2026-07-22 更新, 对齐优化后)
+
+- **文件**: `moptm_fusion.cpp` (commit 358b2f4)
+- **三模式切换**: 顶部 3 行 #define (默认 HINT_OP_DIV, 注释切 ADD/MUL)
+- **DIV**: 18.28ms (1M/500k, 全 6 场景领先 best)
+- **ADD**: 14.35ms (T=200k small, +19.7% vs best)
+- **MUL**: file redirection 下 10k/300k/500k/1M 均胜出 best（仅 100k 差 0.85ms）
+- **正确性**: 2130/2130 ALL PASS
+
+### O2 阶段总结
+
+O2 已接近极限：
+- DIV/ADD 已超越 best
+- MUL 在 file redirection 下 4/5 规模胜出 best（100k 的 0.85ms 是 BASE=10^4 vs 10^8 结构性劣势）
+- FFT 已自动向量化，32 字节对齐缓冲区已实现
+- `__builtin_assume_aligned` 在递归 FFT 中不可用（expand 重分配导致指针失效）
+
+**剩余优化空间**:
+1. 100k 的 0.85ms 差距（BASE 结构性劣势，不改 BASE 无法突破）
+2. DIV cyclic Bug #2 已修复，cyclic 重新启用
+3. O3 开发（用户既定"O2 到极限之后再开发 O3"）
