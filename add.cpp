@@ -1,22 +1,14 @@
 // AZZRCN
 // https://github.com/AZZRCN
 //
-// 三合一提交文件: 提交 LC 时取消注释对应 #define 即可切换 ADD / MUL / DIV
-//   #define HINT_OP_ADD    // Addition of Big Integers
-//   #define HINT_OP_MUL    // Multiplication of Big Integers
-#define HINT_OP_DIV          // Division of Big Integers (当前提交)
+// Addition of Big Integers
+// LC: https://judge.yosupo.jp/problem/addition_of_big_integers
+#define HINT_OP_ADD
 
 // LC 评测机: GCP c2-standard-4 (Cascade Lake, AVX2+FMA+BMI2)
 // #pragma GCC target 可用 (与无效的 #pragma GCC optimize 不同, target 控制指令集)
 // NOTE: fma 已移除 — 实测 fma 导致 FFT 浮点精度变化, 触发罕见除法余数错误 (broad#134)
 #pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")
-
-// cyclic (2NXN mod B^m-1) 路径: 运行时 use_cyclic 切换
-// 当 cyclic_m >= in+len2 时循环卷积退化为线性 (conv_len_max=in+len2 <= cyclic_m),
-//   fftMulModBm1Pre 精度比 fftMulPre 差, 导致 r-based 修正过度调整 qhat (burnikel RE).
-// 修复: use_cyclic=(cyclic_m < in+len2), 退化时自动切换到 fftMulPre + 双向修正.
-// 保留有意义的 cyclic (cyclic_m < in+len2, 如 1M/500k 的 22% FFT 提升).
-//#define DISABLE_2NXN_CYCLIC
 
 #ifndef HINT_MINI_HPP
 #define HINT_MINI_HPP
