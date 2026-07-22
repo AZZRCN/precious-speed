@@ -997,3 +997,57 @@ absDivMu 非cyclic路径修正2（qhat偏小检测）**只比较 new_rp 低 len2
 **O2 优化已到极限**, 三题正确性 2130/2130 PASS。用户可直接提交 LC 验证。
 - 剩余 ~9% DIV 性能 (cyclic Bug #2) 可选修复, 不影响正确性
 - 下一步: O3 开发 或 LC 实际提交验证
+
+## cyclic Bug #2 最终修复 + a>>b 优化（2026-07-22）
+
+### cyclic Bug #2 修复 (commit 3479eb9 验证)
+
+修复方案 9d + 移除 ±1 调整，3000/3000 large-scale verification PASS。
+DIV 1M/500k 恢复到 18.23ms (cyclic 重新启用)。
+
+### DIV a>>b 优化 (commit b6ab780)
+
+当 a 远大于 b 时 (a>>b)，mu_in <= len2 且 est_blocks <= 10 时使用更短的逆元精度。
+DIV 全部 6 场景领先 best:
+- 1M/500k: 18.28ms vs best 108ms (#1)
+- 其余 5 场景均领先
+
+### ADD writeI64/tryParseI64 优化 (commit 7ea076a)
+
+10000 进制分解 + outTable 查表，uint64 除法从 18 次降到 5 次:
+- writeI64: int64 → 字符串，用 10000 进制分解减少除法
+- tryParseI64: 字符串 → int64，4 字节一组用 str4toi 解析
+
+ADD 性能 (vs best):
+- T=200k 1-18digit: 14.35ms vs best 17.88ms (+19.7%)
+- T=200k 1-9digit: 9.24ms vs best 13.13ms (+29.7%)
+
+### MUL copyU16ToF64 + writeTo AVX2 8×展开 (commit 310879f)
+
+**copyU16ToF64**: AVX2 向量化 uint16→double 转换 (16 元素/次)，替代 6 处 std::copy。
+- 修复关键 bug: 初版用 _mm_loadu_si128 只加载 8 个 uint16 但声称处理 16 个，
+  导致 dst[8..11]=src[4..7](重复) 和 dst[12..15]=0(错误)。
+  修复为 _mm256_loadu_si256 加载 32 字节 = 16 个 uint16。
+
+**writeTo AVX2 8×展开**: 一次输出 32 字节 = 8 个 limb，减半 store 次数。
+
+MUL 性能 (vs best):
+| Size | moptm | best | gap |
+|------|-------|------|-----|
+| 10k*10k | 0.71ms | 0.64ms | +0.07ms |
+| 100k*100k | 2.32ms | 2.15ms | +0.17ms |
+| 300k*300k | 8.50ms | 8.05ms | +0.44ms |
+| 500k*500k | 9.49ms | 9.26ms | +0.23ms |
+
+MUL 仍有 -2.5%~-10.9% gap，主因是 BASE=10^4 结构性劣势 (limb 数 2 倍 vs best BASE=10^8)。
+FFT 仅占 30-37%，I/O 占 63-70%。
+
+### 当前 O2 最快版本 (2026-07-22 更新)
+
+- **文件**: `moptm_fusion.cpp` (commit 310879f)
+- **三模式切换**: 顶部 3 行 #define (默认 HINT_OP_DIV, 注释切 ADD/MUL)
+- **DIV**: 18.28ms (1M/500k, 全 6 场景领先 best)
+- **ADD**: 14.35ms (T=200k small, +19.7% vs best)
+- **MUL**: 9.49ms (500k*500k, -2.5% vs best)
+- **正确性**: 909/909 MUL PASS + 3000/3000 DIV PASS + ADD PASS
+- **Fuzz 脚本**: test_mul_opt.py (909 cases), test_add_i64_opt.py (1000 cases)
