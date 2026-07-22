@@ -1442,33 +1442,32 @@ namespace hint
             }
             // 其余 limb 查表，每 4 位
             size_t i = data.size() - 1;
-            // OPT-3: AVX2 8× 展开, 一次输出 32 字节 = 8 个 limb, 减半 store 次数
+            // OPT-3: AVX2 8× 展开, 一次输出 32 字节 = 8 个 limb
+            // 用标量 store 直接写输出, 避免 _mm256_set_epi32 的 8 次 vmovd+vinserti128 开销
 #if defined(__AVX2__)
             while (i >= 8)
             {
-                uint32_t v0 = outTable.t[data[i - 1]];
-                uint32_t v1 = outTable.t[data[i - 2]];
-                uint32_t v2 = outTable.t[data[i - 3]];
-                uint32_t v3 = outTable.t[data[i - 4]];
-                uint32_t v4 = outTable.t[data[i - 5]];
-                uint32_t v5 = outTable.t[data[i - 6]];
-                uint32_t v6 = outTable.t[data[i - 7]];
-                uint32_t v7 = outTable.t[data[i - 8]];
-                __m256i v = _mm256_set_epi32(v7, v6, v5, v4, v3, v2, v1, v0);
-                _mm256_storeu_si256(reinterpret_cast<__m256i*>(p), v);
+                uint32_t* p32 = reinterpret_cast<uint32_t*>(p);
+                p32[0] = outTable.t[data[i - 1]];
+                p32[1] = outTable.t[data[i - 2]];
+                p32[2] = outTable.t[data[i - 3]];
+                p32[3] = outTable.t[data[i - 4]];
+                p32[4] = outTable.t[data[i - 5]];
+                p32[5] = outTable.t[data[i - 6]];
+                p32[6] = outTable.t[data[i - 7]];
+                p32[7] = outTable.t[data[i - 8]];
                 p += 32;
                 i -= 8;
             }
 #endif
-            // OPT-2: SSE2 4× 展开, 处理剩余 >= 4 的部分
+            // OPT-2: 4× 标量 store, 处理剩余 >= 4 的部分
             while (i >= 4)
             {
-                uint32_t v0 = outTable.t[data[i - 1]];
-                uint32_t v1 = outTable.t[data[i - 2]];
-                uint32_t v2 = outTable.t[data[i - 3]];
-                uint32_t v3 = outTable.t[data[i - 4]];
-                __m128i v = _mm_set_epi32(v3, v2, v1, v0);
-                _mm_storeu_si128(reinterpret_cast<__m128i*>(p), v);
+                uint32_t* p32 = reinterpret_cast<uint32_t*>(p);
+                p32[0] = outTable.t[data[i - 1]];
+                p32[1] = outTable.t[data[i - 2]];
+                p32[2] = outTable.t[data[i - 3]];
+                p32[3] = outTable.t[data[i - 4]];
                 p += 16;
                 i -= 4;
             }
@@ -4056,7 +4055,20 @@ namespace {
     }
 
     void flushOutput() {
+        // 直接 write() syscall, 绕过 fwrite 的 libc 内部缓冲 (默认可能仅 4KB/8KB),
+        // 避免大输出时多次 write() 调用
+#ifdef __linux__
+        ssize_t total = oCursor - oBuffer;
+        const char* ptr = oBuffer;
+        while (total > 0) {
+            ssize_t n = write(STDOUT_FILENO, ptr, total);
+            if (n <= 0) break;
+            ptr += n;
+            total -= n;
+        }
+#else
         std::fwrite(oBuffer, 1, oCursor - oBuffer, stdout);
+#endif
     }
 
     // === 快速输入 (mmap 零拷贝 Linux / fread 一次性 Windows fallback) ===
@@ -4289,7 +4301,13 @@ int main() {
 }
 #elif defined(HINT_OP_MUL)
 int main() {
+#ifdef BENCH_INTERNAL
+    auto _t_main_start = std::chrono::high_resolution_clock::now();
+#endif
     initInput();
+#ifdef BENCH_INTERNAL
+    auto _t_after_init = std::chrono::high_resolution_clock::now();
+#endif
     size_t t = 0;
     while (iCursor < iEnd && *iCursor >= '0' && *iCursor <= '9') {
         t = t * 10 + size_t(*iCursor++ - '0');
@@ -4298,13 +4316,18 @@ int main() {
     hint::Integer a, b;
 #ifdef BENCH_INTERNAL
     // 内部计时模式: 读1对, 循环计算 N 次, 每次单独计时
+    // 同时测 parse 和 write, 定位 I/O 瓶颈
+    double t_parse = 0, t_write = 0;
+    auto tp0 = std::chrono::high_resolution_clock::now();
     parseInteger(a);
     parseInteger(b);
+    auto tp1 = std::chrono::high_resolution_clock::now();
+    t_parse = std::chrono::duration<double, std::milli>(tp1 - tp0).count();
     // warmup
     hint::Integer c;
     for (int i = 0; i < 3; i++) { c = a; c *= b; }
-    const int N = 20;
-    double times[20];
+    const int N = 30;
+    double times[30];
     double total = 0;
     for (int i = 0; i < N; i++) {
         c = a;
@@ -4315,11 +4338,21 @@ int main() {
         total += times[i];
     }
     std::sort(times, times + N);
-    fprintf(stderr, "MIN: %.3f  MED: %.3f  AVG: %.3f  MAX: %.3f  TOTAL: %.3f\n",
-            times[0], times[N/2], total/N, times[N-1], total);
+    auto tw0 = std::chrono::high_resolution_clock::now();
     writeHint(c);
     *oCursor++ = '\n';
+    auto tw1 = std::chrono::high_resolution_clock::now();
     flushOutput();
+    auto tw2 = std::chrono::high_resolution_clock::now();
+    double t_writeTo = std::chrono::duration<double, std::milli>(tw1 - tw0).count();
+    double t_flush = std::chrono::duration<double, std::milli>(tw2 - tw1).count();
+    t_write = t_writeTo + t_flush;
+    auto _t_main_end = std::chrono::high_resolution_clock::now();
+    double t_init = std::chrono::duration<double, std::milli>(_t_after_init - _t_main_start).count();
+    double t_wall = std::chrono::duration<double, std::milli>(_t_main_end - _t_main_start).count();
+    // 输出: INIT / PARSE / MUL_MIN / MUL_MED / MUL_AVG / WRITE_TO / FLUSH / WALL
+    fprintf(stderr, "INIT: %.3f  PARSE: %.3f  MUL_MIN: %.3f  MUL_MED: %.3f  MUL_AVG: %.3f  WRITE_TO: %.3f  FLUSH: %.3f  WALL: %.3f\n",
+            t_init, t_parse, times[0], times[N/2], total/N, t_writeTo, t_flush, t_wall);
     return 0;
 #endif
     while (t--) {

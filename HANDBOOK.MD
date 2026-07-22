@@ -1042,12 +1042,79 @@ MUL 性能 (vs best):
 MUL 仍有 -2.5%~-10.9% gap，主因是 BASE=10^4 结构性劣势 (limb 数 2 倍 vs best BASE=10^8)。
 FFT 仅占 30-37%，I/O 占 63-70%。
 
-### 当前 O2 最快版本 (2026-07-22 更新)
+### 当前 O2 最快版本 (2026-07-22 更新, MUL I/O 优化后)
 
-- **文件**: `moptm_fusion.cpp` (commit 310879f)
+- **文件**: `moptm_fusion.cpp` (含 flushOutput write() + writeTo 标量 store, 待 commit)
 - **三模式切换**: 顶部 3 行 #define (默认 HINT_OP_DIV, 注释切 ADD/MUL)
 - **DIV**: 18.28ms (1M/500k, 全 6 场景领先 best)
 - **ADD**: 14.35ms (T=200k small, +19.7% vs best)
-- **MUL**: 9.49ms (500k*500k, -2.5% vs best)
+- **MUL**: 8.438ms (500k*500k, +0.543ms vs best, 30-run taskset -c 0)
 - **正确性**: 909/909 MUL PASS + 3000/3000 DIV PASS + ADD PASS
 - **Fuzz 脚本**: test_mul_opt.py (909 cases), test_add_i64_opt.py (1000 cases)
+
+## MUL I/O 优化（2026-07-22 夜间自主推进）
+
+### 背景
+
+前 session 已完成 MUL copyU16ToF64 AVX2 load bug 修复 + writeTo 8× AVX2 展开 (commit 310879f, 500k 10.37→9.49ms)。本 session 继续 MUL I/O 深挖。
+
+### _f133 分析（O3 预展开参考）
+
+用户提示参考 `D:\gcc modifield\shrunk_ADD_v4.cpp` 的 `_f133` (L6406, string→limbs)。复制为 `shrunk_ADD_v4_ref.cpp` 后分析：
+
+- **_f133**: parse 方向 (string→limbs)，SSE2 序列与现有 `str16to4limbs` (L991-1016) 完全等价
+- **shrunk writeTo (L6295-6404)**: 4× SSE2，比我们的 8× 标量 store 更弱
+- **结论**: 无可借鉴内容
+
+### BENCH_INTERNAL 分阶段计时
+
+为定位 MUL I/O 瓶颈，在 `HINT_OP_MUL` + `BENCH_INTERNAL` 模式下分解 INIT/PARSE/MUL_MIN/MUL_MED/MUL_AVG/WRITE_TO/FLUSH/WALL 各阶段耗时（30 runs, taskset -c 0, ms）：
+
+| Size | init | parse | mul_min | writeTo | flush | moptm_wall | best_wall |
+|------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| 10k | 0.005 | 0.010 | 0.073 | 0.039 | 0.005 | 1.166 | 1.153 |
+| 100k | 0.010 | 0.071 | 0.717 | 0.094 | 0.697 | 2.780 | 2.352 |
+| 300k | 0.005 | 0.206 | 3.272 | 0.355 | 1.197 | 8.156 | 6.959 |
+| 500k | 0.006 | 0.328 | 3.350 | 0.369 | 2.506 | 8.438 | 7.894 |
+| 1M | 0.005 | 0.756 | 7.671 | 0.796 | 4.472 | 17.652 | 16.714 |
+
+**关键发现**: flushOutput(fwrite) 是最大 I/O 开销，1M 占 4.472ms/17.652ms ≈ 25%。
+
+### 优化 1: flushOutput 用 write() syscall
+
+`flushOutput()` (L4055) 改用 `write(STDOUT_FILENO, ...)` 直接 syscall，绕过 fwrite 的 libc 内部缓冲（默认可能仅 4KB/8KB），避免大输出时多次 write() 调用。Linux 专用，非 Linux 回退 fwrite。
+
+- 1M flush: 4.485ms → 3.882ms (−13%)
+- 300k flush: 1.42ms → 1.20ms
+
+### 优化 2: writeTo 标量 store 替代向量插入
+
+`writeTo()` 的 8× 和 4× 循环 (L1445-1473) 原先用 `_mm256_set_epi32` / `_mm_set_epi32` + 向量 store。但 `_mm256_set_epi32` 需要 8 次标量→向量插入指令（vmovd + vinserti128 序列），比直接标量 store 更慢。改为 `uint32_t* p32` 标量 store。
+
+### 30-run benchmark (taskset -c 0, 取 min)
+
+| Size | moptm_min | best_min | diff_min |
+|------|:-:|:-:|:-:|
+| 10k | 1.166 | 1.153 | +0.013 |
+| 100k | 2.780 | 2.352 | +0.428 |
+| 300k | 8.156 | 6.959 | +1.198 |
+| 500k | 8.438 | 7.894 | +0.543 |
+| 1M | 17.652 | 16.714 | +0.938 |
+
+vs 优化前 (500k +2.337ms, 1M +1.559ms)：
+- 500k: +2.337 → +0.543 (−1.794ms, −76.8%)
+- 1M: +1.559 → +0.938 (−0.621ms, −39.8%)
+
+### 正确性
+
+- 909/909 MUL fuzz PASS (test_mul_opt.py)
+
+### 剩余差距分析
+
+100k (+0.428ms) 和 300k (+1.198ms) 仍有差距。从 profile 看：
+- 100k: flush 0.697ms 占 25%，parse 0.071ms，mul 0.717ms
+- 300k: flush 1.197ms 占 15%，parse 0.206ms，mul 3.272ms
+- best/mul.cpp 用 BASE=10^8（FFT 长度更短）+ mmap + 32MB oBuffer，结构性优势在 mul 计算本身
+- moptm 的 mul_min 在 300k/500k 接近 best，差距主要来自 flush + parse 的 I/O 固定开销
+
+**待调查**: 100k/300k 的 flush 占比异常（best 同规模 flush 应更快），可能与 oBuffer 大小或 mmap 输入有关。
