@@ -4,18 +4,18 @@
 // 三合一提交文件: 提交 LC 时取消注释对应 #define 即可切换 ADD / MUL / DIV
 //   #define HINT_OP_ADD    // Addition of Big Integers
 //   #define HINT_OP_MUL    // Multiplication of Big Integers
-#define HINT_OP_DIV          // Division of Big Integers (默认)
+#define HINT_OP_DIV          // Division of Big Integers (当前提交)
 
 // LC 评测机: GCP c2-standard-4 (Cascade Lake, AVX2+FMA+BMI2)
 // #pragma GCC target 可用 (与无效的 #pragma GCC optimize 不同, target 控制指令集)
 // NOTE: fma 已移除 — 实测 fma 导致 FFT 浮点精度变化, 触发罕见除法余数错误 (broad#134)
 #pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")
 
-// cyclic (2NXN mod B^m-1) 路径: 重新启用 (方案9d: cyclic_m 增大确保 unwrap 安全)
-// 根因修复: 原 cyclic_m=int_ceil2(len2+1) 只依赖 divisor 长度, 当 this_in>>len2 时
-//   wn=len2+this_in-cyclic_m > cyclic_m → Span 越界 + unwrap 只处理 k=1 时 k>=2 失效
-// 方案9d: cyclic_m=max(int_ceil2(len2+1), int_ceil2((len2+in)/2+1)), 确保 2*cyclic_m>len2+in
-//   大比例(a>>b)时 cyclic_m≈非cyclicFFT/2, 仍保留约2倍FFT提升
+// cyclic (2NXN mod B^m-1) 路径: 运行时 use_cyclic 切换
+// 当 cyclic_m >= in+len2 时循环卷积退化为线性 (conv_len_max=in+len2 <= cyclic_m),
+//   fftMulModBm1Pre 精度比 fftMulPre 差, 导致 r-based 修正过度调整 qhat (burnikel RE).
+// 修复: use_cyclic=(cyclic_m < in+len2), 退化时自动切换到 fftMulPre + 双向修正.
+// 保留有意义的 cyclic (cyclic_m < in+len2, 如 1M/500k 的 22% FFT 提升).
 //#define DISABLE_2NXN_CYCLIC
 
 #ifndef HINT_MINI_HPP
@@ -34,8 +34,8 @@
 #include <immintrin.h>  // AVX2/SSE2 SIMD (emmintrin.h 子集, 含 AVX2 intrinsics)
 
 #include <chrono>
+#include <cstdio>  // for debug fprintf to stderr (LC RE shows stderr)
 #ifdef PROFILE_DIV
-#include <cstdio>
 static FILE *_prof_fp = nullptr;
 static inline void _prof_init() { if (!_prof_fp) _prof_fp = std::fopen("prof_detail.log", "w"); }
 static inline void _prof_flush() { if (_prof_fp) { std::fflush(_prof_fp); } }
@@ -2001,7 +2001,13 @@ namespace hint
             double *v1 = tv1.data(), *v2 = tv2.data();
             copyU16ToF64AndFill(in1.ptr, v1, len1, float_len);
             copyU16ToF64AndFill(in2.ptr, v2, len2, float_len);
+#ifdef PROFILE_MUL
+            auto _t_fft0 = std::chrono::high_resolution_clock::now();
+#endif
             transform::fft::real_conv(v1, v2, float_len);
+#ifdef PROFILE_MUL
+            auto _t_carry0 = std::chrono::high_resolution_clock::now();
+#endif
             uint64_t carry = 0;
             size_t i = 0;
             for (; i + 7 < conv_len; i += 8)
@@ -2052,6 +2058,12 @@ namespace hint
             {
                 std::fill_n(out.ptr + conv_len + 1, out.size - conv_len - 1, Limb(0));
             }
+#ifdef PROFILE_MUL
+            auto _t_carry1 = std::chrono::high_resolution_clock::now();
+            double _dt_fft = std::chrono::duration<double, std::milli>(_t_carry0 - _t_fft0).count();
+            double _dt_carry = std::chrono::duration<double, std::milli>(_t_carry1 - _t_carry0).count();
+            fprintf(stderr, "  [prof] fftMul: FFT=%.3fms CARRY=%.3fms conv_len=%zu fl=%zu\n", _dt_fft, _dt_carry, conv_len, float_len);
+#endif
         }
         static void fftSqr(View in, Span out)
         {
@@ -3245,6 +3257,10 @@ namespace hint
             size_t divisor_float_len = int_ceil2(len2 + in);
             if (inv_dft_buf.size() < inv_float_len) inv_dft_buf.resize(inv_float_len);
             if (divisor_dft_buf.size() < divisor_float_len) divisor_dft_buf.resize(divisor_float_len);
+            // FIX: cyclic 路径在 cyclic_m >= 线性卷积长度时退化, fftMulModBm1Pre 精度差,
+            //   导致 r-based 修正过度调整 qhat (burnikel_ziegler_bound base=10/10^9 RE).
+            //   运行时检测退化, 切换到 linear 路径. 保留有意义的 cyclic (如 1M/500k 22% 提升).
+            bool use_cyclic = false;
 #ifndef DISABLE_2NXN_CYCLIC
             // 2NXN 循环卷积 (GMP mu_div_qr.c L288-303):
             // fftMulPre #2 用 cyclic mod (B^m-1), FFT 大小 m=int_ceil2(len2+1)
@@ -3266,7 +3282,10 @@ namespace hint
             if (est_blocks > 10) {
                 cyclic_m = int_ceil2(len2 + in + 1);
             }
-            if (divisor_dft_mod_buf.size() < cyclic_m) divisor_dft_mod_buf.resize(cyclic_m);
+            // 运行时检测: cyclic_m >= in+len2 时循环卷积退化为线性 (conv_len_max = in+len2),
+            //   fftMulModBm1Pre 精度无优势且更差, 改用 fftMulPre + 双向修正
+            use_cyclic = (cyclic_m < in + len2);
+            if (use_cyclic && divisor_dft_mod_buf.size() < cyclic_m) divisor_dft_mod_buf.resize(cyclic_m);
 #endif
 
             // B-1 优化: 当 in == len2 时, divisor 切片 = 完整 divisor, 可复用 DFT 给 absInvNewton
@@ -3275,7 +3294,9 @@ namespace hint
                 prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
                 absInvNewton(divisor, inv_span, divisor_dft_buf.data(), divisor_float_len);
 #ifndef DISABLE_2NXN_CYCLIC
-                prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
+                if (use_cyclic) {
+                    prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
+                }
 #endif
             }
             else
@@ -3284,10 +3305,13 @@ namespace hint
                 // CYCLIC_MIN_K=4096 阈值保证; k<4096 时 absInvNewtonGMP 内部回退到 absInvNewton 逻辑
                 absInvNewtonGMP(divisor + (len2 - in), inv_span);
 #ifndef DISABLE_2NXN_CYCLIC
-                prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
-#else
-                prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
+                if (use_cyclic) {
+                    prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
+                } else
 #endif
+                {
+                    prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
+                }
             }
             prepareDFT(inv_span, inv_dft_buf.data(), inv_float_len);
 
@@ -3350,6 +3374,17 @@ namespace hint
                 // qhat ≈ divid_high * inv / B^(in+1) ≈ Q_block (本块真实商)
                 Span qhat_span = qhat_full + (in + 1);
 
+                // FFT precision fix: if qhat top limb != 0, FFT rounding error
+                // propagated via carry chain to top limb (±B^this_in level error).
+                // r-based correction loop (±1 adjustments) cannot handle this.
+                // Recompute divid_high * inv with exact basicMul.
+                // Triggers mainly for adversarial inputs (e.g. burnikel_ziegler_bound);
+                // for random inputs FFT is exact, so performance impact is negligible.
+                if (qhat_span.size > 0 && qhat_span[qhat_span.size - 1] != Limb(0))
+                {
+                    basicMul(divid_high, inv_span, qhat_full);
+                }
+
                 // prod = divisor * qhat, 长度 = len2 + this_in + 1
                 size_t prod_len = len2 + qhat_span.size;
                 Span prod_span(tprod.data(), prod_len);
@@ -3361,6 +3396,7 @@ namespace hint
                 // C = (qhat * divisor) mod (B^cyclic_m - 1), FFT 大小 cyclic_m (减半)
                 // unwrap (GMP L226-L227): tp[0..wn-1] -= rp[dn-wn..dn-1] (rp 高 wn 位 ≈ prod 高 wn 位)
                 // 修正 (GMP L228-L230): cx-cy 进位调整, 反映 cyclic 边界误差
+                if (use_cyclic)
                 {
                     Span prod_mod_span(tprod.data(), cyclic_m);
                     fftMulModBm1Pre(qhat_span, divisor_dft_mod_buf.data(), len2, cyclic_m, prod_mod_span);
@@ -3402,9 +3438,11 @@ namespace hint
                     }
                     // 不重建 prod 高位! 真实 prod 高 wn 位由 r-based 修正循环处理
                 }
-#else
-                fftMulPre(qhat_span, divisor_dft_buf.data(), len2, divisor_float_len, prod_span);
+                else
 #endif
+                {
+                    fftMulPre(qhat_span, divisor_dft_buf.data(), len2, divisor_float_len, prod_span);
+                }
 #ifdef PROFILE_DIV
                 auto _blk_t3 = std::chrono::high_resolution_clock::now();
 #ifndef DISABLE_2NXN_CYCLIC
@@ -3428,12 +3466,17 @@ namespace hint
                 size_t wnd_full_len = len2 + this_in;
                 size_t prod_full_len;
 #ifndef DISABLE_2NXN_CYCLIC
-                prod_full_len = cyclic_m;
-#else
-                prod_full_len = prod_len;
+                if (use_cyclic) {
+                    prod_full_len = cyclic_m;
+                } else
 #endif
+                {
+                    prod_full_len = prod_len;
+                }
 
 #ifndef DISABLE_2NXN_CYCLIC
+                if (use_cyclic)
+                {
                 // === cyclic 路径修正逻辑 (GMP mu_divappr_q.c L235-271, r 方法 + 双向修正) ===
                 // GMP: r = rp[dn-in] - tp[dn], 反映 qhat 偏差
                 //   映射: dn=len2, in=this_in, rp[dn-in]=window[len2], tp[dn]=tprod[len2]
@@ -3490,7 +3533,10 @@ namespace hint
                     absSub(Span(tprod.data(), len2), divisor, Span(tprod.data(), len2));
                     absAdd1(qhat_span, 1, qhat_span);
                 }
-#else
+                }
+                else
+#endif
+                {
                 // --- 修正 1: product > window ? (qhat 偏大) ---
                 int corr_down = 0;
                 while (corr_down < 10) {
@@ -3578,7 +3624,7 @@ namespace hint
                     absAdd1(qhat_span, 1, qhat_span);
                     corr_up++;
                 }
-#endif
+                }
 
                 // --- 把新 rp 复制到 window ---
                 std::copy(tprod.data(), tprod.data() + len2, window.ptr);
@@ -3805,8 +3851,11 @@ namespace hint
                     // in=len2 + cyclic 路径的 r-based 修正在多块场景不可靠
                     // (divisor[len2]=0 → qhat偏小1时 r 可能=0, FFT精度加剧)
                     // 限制: mu_in==len2 时仅 est_blocks<=10 走 absDivMu, 否则回退 Core2
+                    // FFT 精度限制: in < 64 时 FFT 点数少, 浮点舍入差异(LC g++ 11.4)可能导致
+                    //   qhat 最高位 ±1 偏差 → B^this_in 级别误差, r-based 修正循环无法处理
+                    //   burnikel_ziegler_bound 用例(in=22/52)在 LC 上触发此问题
                     bool ab_safe = (mu_in < len2) || ((quot_span.size + mu_in - 1) / mu_in <= 10);
-                    if (mu_in <= len2 && ab_safe)
+                    if (mu_in <= len2 && ab_safe && mu_in >= 64)
                     {
                         absDivMu(dividend_span, divisor_span, quot_span, mu_in);
                     }
