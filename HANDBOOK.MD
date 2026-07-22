@@ -1004,6 +1004,54 @@ d589fef opt(mul): flushOutput write() syscall + writeTo scalar store
 3. **assert bug 深入调查** — cyclic 路径精度问题的根因（低优先级, 已用 DISABLE_2NXN_CYCLIC 规避）
 4. **O3 开发** — 用户 O3 预展开项目可继续推进
 
+## ADD small_00 深度优化（2026-07-22）
+
+### 背景
+
+LC ADD 的 small_00 测试点（T=200000, 每个数字 1-18 位）一直是瓶颈。之前 LC 提交 #386921 成绩 22ms（int64 快速路径之前），优化后 VM 14.35ms。
+
+### 优化 1: SWAR 8 字节验证 (commit ff91598)
+
+- `tryParseI64` 中的逐字符验证循环改为 SWAR 8 字节并行检查
+- 技巧: `(data - 0x3030...3030) + 0x7676...7676`, 检查每字节 bit7
+- 8 字符/迭代 vs 1 字符/迭代
+
+### 优化 2: tryParseI64Unchecked 跳过验证 (commit adb5bb9)
+
+- `readToken` 已用 SWAR 找到 token 边界（遇到 < 0x21 停止）
+- LC 合法输入的 token 内容保证是数字（或前导 '-'）
+- 新增 `tryParseI64Unchecked` 跳过 SWAR 验证，直接 4 字节 parse
+- main 循环使用 Unchecked 变体
+
+### 性能 (VM g++ 15.2 -O2, file redirection, 30-run min, vs best/add.cpp)
+
+| Test | 优化前 | SWAR验证 | Unchecked | best |
+|------|:-:|:-:|:-:|:-:|
+| small_00 (T=200k) | 14.35ms | 10.55ms | **10.05ms** | 14.04ms |
+| add_1m | 2.93ms | 2.58ms | 2.78ms | 2.79ms |
+
+- small_00: 14.35 → 10.05ms (**-30% vs 优化前, -28.4% vs best**)
+- add_1m: 保持领先 best
+
+### 尝试但回退的优化
+
+1. **writeI64 重写（从后往前写 + memmove）** — 反而变慢 +21%（memmove 对短数字有额外开销，查表法更优）
+2. **SWAR 8 字节 parse** — 对 digit_len < 8 处理复杂（需 mask 无效字节），且 small_00 平均 9.5 位，大部分 > 8 位，收益有限
+
+### 提交链
+
+```
+adb5bb9 opt(add): tryParseI64Unchecked skips digit validation
+ff91598 opt(add): SWAR 8-byte digit validation for tryParseI64
+```
+
+### 关键发现
+
+- small_00 瓶颈是 per-call 开销（parse + write），不是计算
+- 跳过验证比 SWAR 验证更快（验证是冗余的，readToken 已保证边界）
+- writeI64 的查表法（outTable 4 字节/次）比 memmove 方案更优
+- best/add.cpp 没有 int64 快速路径，对所有数字走 SignedInteger 路径
+
 ## absDivMu 修正2 carry propagation bug 修复（2026-07-22 夜间自主推进）
 
 ### Bug 描述
