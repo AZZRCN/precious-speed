@@ -1014,6 +1014,35 @@ namespace hint
         __m128i result = _mm_packs_epi32(v4, v4);
         _mm_storel_epi64(reinterpret_cast<__m128i *>(limbs4), result);
     }
+    // OPT: AVX2 向量化 uint16→double 转换 (16 元素/次), 替代 std::copy 的标量逐元素转换
+    // 用于 FFT 输入准备: limb 数组 (uint16) → double 缓冲区
+    inline void copyU16ToF64(const uint16_t *src, double *dst, size_t n)
+    {
+        size_t j = 0;
+#if defined(__AVX2__)
+        for (; j + 16 <= n; j += 16)
+        {
+            // 加载 32 字节 = 16 个 uint16, 拆成高低各 8 个
+            __m256i vals = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(src + j));
+            __m128i lo128 = _mm256_castsi256_si128(vals);      // 低 8 字节 = src[j..j+7]
+            __m128i hi128 = _mm256_extracti128_si256(vals, 1); // 高 8 字节 = src[j+8..j+15]
+            __m256i lo32 = _mm256_cvtepu16_epi32(lo128);       // 低 8 个 uint16 → 8 个 int32
+            __m256i hi32 = _mm256_cvtepu16_epi32(hi128);       // 高 8 个 uint16 → 8 个 int32
+            __m256d d0 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(lo32));
+            __m256d d1 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(lo32, 1));
+            __m256d d2 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(hi32));
+            __m256d d3 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(hi32, 1));
+            _mm256_storeu_pd(dst + j, d0);
+            _mm256_storeu_pd(dst + j + 4, d1);
+            _mm256_storeu_pd(dst + j + 8, d2);
+            _mm256_storeu_pd(dst + j + 12, d3);
+        }
+#endif
+        for (; j < n; j++)
+        {
+            dst[j] = src[j];
+        }
+    }
     constexpr void itostr4(uint16_t n, char *s)
     {
         s[0] = n / 1000 + '0';
@@ -1412,17 +1441,32 @@ namespace hint
                 *p++ = tmp[n];
             }
             // 其余 limb 查表，每 4 位
-            // OPT-2: SSE2 4× 展开，一次输出 16 字节 = 4 个 limb
             size_t i = data.size() - 1;
-            while (i >= 4)
+            // OPT-3: AVX2 8× 展开, 一次输出 32 字节 = 8 个 limb, 减半 store 次数
+#if defined(__AVX2__)
+            while (i >= 8)
             {
-                uint32_t v0 = outTable.t[data[i - 1]]; // 最高（先输出）
+                uint32_t v0 = outTable.t[data[i - 1]];
                 uint32_t v1 = outTable.t[data[i - 2]];
                 uint32_t v2 = outTable.t[data[i - 3]];
-                uint32_t v3 = outTable.t[data[i - 4]]; // 最低
-                // _mm_set_epi32(e3, e2, e1, e0): e3 在最高地址，e0 在最低地址
-                // 输出顺序：data[i-1] -> p[0..3], data[i-2] -> p[4..7],
-                //          data[i-3] -> p[8..11], data[i-4] -> p[12..15]
+                uint32_t v3 = outTable.t[data[i - 4]];
+                uint32_t v4 = outTable.t[data[i - 5]];
+                uint32_t v5 = outTable.t[data[i - 6]];
+                uint32_t v6 = outTable.t[data[i - 7]];
+                uint32_t v7 = outTable.t[data[i - 8]];
+                __m256i v = _mm256_set_epi32(v7, v6, v5, v4, v3, v2, v1, v0);
+                _mm256_storeu_si256(reinterpret_cast<__m256i*>(p), v);
+                p += 32;
+                i -= 8;
+            }
+#endif
+            // OPT-2: SSE2 4× 展开, 处理剩余 >= 4 的部分
+            while (i >= 4)
+            {
+                uint32_t v0 = outTable.t[data[i - 1]];
+                uint32_t v1 = outTable.t[data[i - 2]];
+                uint32_t v2 = outTable.t[data[i - 3]];
+                uint32_t v3 = outTable.t[data[i - 4]];
                 __m128i v = _mm_set_epi32(v3, v2, v1, v0);
                 _mm_storeu_si128(reinterpret_cast<__m128i*>(p), v);
                 p += 16;
@@ -1909,9 +1953,9 @@ namespace hint
             if (tv2.size() < float_len)
                 tv2.resize(float_len);
             double *v1 = tv1.data(), *v2 = tv2.data();
-            std::copy(in1.ptr, in1.ptr + len1, v1);
-            std::fill(v1 + len1, v1 + float_len, 0.0); 
-            std::copy(in2.ptr, in2.ptr + len2, v2);
+            copyU16ToF64(in1.ptr, v1, len1);
+            std::fill(v1 + len1, v1 + float_len, 0.0);
+            copyU16ToF64(in2.ptr, v2, len2);
             std::fill(v2 + len2, v2 + float_len, 0.0);
             transform::fft::real_conv(v1, v2, float_len);
             uint64_t carry = 0;
@@ -1975,7 +2019,7 @@ namespace hint
             if (tv.size() < float_len)
                 tv.resize(float_len);
             double *v = tv.data();
-            std::copy(in.ptr, in.ptr + len, v);
+            copyU16ToF64(in.ptr, v, len);
             std::fill(v + len, v + float_len, 0.0);
             transform::fft::real_conv(v, v, float_len);
             uint64_t carry = 0;
@@ -2141,7 +2185,7 @@ namespace hint
         {
             assert(is_2pow(float_len));
             assert(float_len >= in.size);
-            std::copy(in.begin(), in.end(), dft_buf);
+            copyU16ToF64(in.begin(), dft_buf, in.size);
             std::fill(dft_buf + in.size, dft_buf + float_len, 0.0);
             auto &fft = transform::fft::getSharedFFT<double>();
             fft.expand(float_len);
@@ -2165,7 +2209,7 @@ namespace hint
             if (tv.size() < float_len)
                 tv.resize(float_len);
             double *v = tv.data();
-            std::copy(a.ptr, a.ptr + a_len, v);
+            copyU16ToF64(a.ptr, v, a_len);
             std::fill(v + a_len, v + float_len, 0.0);
             auto &fft = transform::fft::getSharedFFT<double>();
             fft.expand(float_len);
@@ -2244,9 +2288,9 @@ namespace hint
             double *va = tv.data();
             double *vb = tv.data() + m;
 
-            std::copy(a.ptr, a.ptr + a_len, va);
+            copyU16ToF64(a.ptr, va, a_len);
             std::fill(va + a_len, va + m, 0.0);
-            std::copy(b.ptr, b.ptr + b_len, vb);
+            copyU16ToF64(b.ptr, vb, b_len);
             std::fill(vb + b_len, vb + m, 0.0);
 
             auto &fft = transform::fft::getSharedFFT<double>();
@@ -2357,7 +2401,7 @@ namespace hint
                 tv.resize(m);
             double *v = tv.data();
 
-            std::copy(a.ptr, a.ptr + a_len, v);
+            copyU16ToF64(a.ptr, v, a_len);
             std::fill(v + a_len, v + m, 0.0);
 
             auto &fft = transform::fft::getSharedFFT<double>();
