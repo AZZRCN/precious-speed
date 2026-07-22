@@ -267,7 +267,7 @@ MPN_INCR_U (ip - rn, rn, cy);
 
 ### VM 测试与 Benchmark 结果 (2026-07-21)
 
-**SSH 修复**: ssh_exec.py 的 HOST 从旧 IP `10.144.33.157` 更新为 `192.168.1.55`。
+**SSH 修复**: ssh_exec.py 的 HOST 从旧 IP（已移除）更新为 `192.168.1.55`。
 
 **HINT_OP_TESTNEWTON 大规模测试** (3 组, k=25000/50000/62500):
 - k=25000 PASS
@@ -552,7 +552,7 @@ if (wn > 0)
 - 12 组定向 fuzz: 全部 MD5 匹配 ✓
 - 100 组随机 fuzz (尺寸 5000~50000 limbs): 全部 MD5 匹配 ✓ (修复 Case 20 buffer 溢出后)
 
-**性能** (VM 独占, 10.144.33.157, 15 runs × 50 loops, 中位数):
+**性能** (VM 独占, 192.168.1.55, 15 runs × 50 loops, 中位数):
 
 | 测试 | Baseline | Cyclic | Speedup |
 |------|----------|--------|---------|
@@ -622,7 +622,7 @@ prod_len_max = std::max(prod_len_max, cyclic_m);  // cyclic_m 可能 > prod_len_
 ```
 **原理**: absInvNewton 是精确逆 (floor(D/B^k)), 精度足够高, 修正 2 最多迭代 1 次 (对照 GMP mu_div_qr.c L335-341 的 `if (mpn_cmp(rp, dp, dn) >= 0)` 单次检查)。
 
-### VM 验证结果 (10.144.33.157, VM 独占)
+### VM 验证结果 (192.168.1.55, VM 独占)
 
 **正确性** (100 组随机 fuzz + 标准测试, MD5 全部匹配):
 - 100 组 fuzz (尺寸 5000~50000 limbs × 4 digits): MD5 = `b01ed0b2dd2cbab08117876e625a2020` (baseline) = `b01ed0b2dd2cbab08117876e625a2020` (default) ✓

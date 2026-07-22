@@ -37,10 +37,9 @@ d:\precious_speed\
 ```
 
 ### VM 访问信息
-- SSH: `10.144.33.157`, 用户 `azzr`, 密码 `1234`
+- SSH: `192.168.1.55`（本地 VM，凭据已移除）
 - Ubuntu 7.0.0, g++ 15.2.0, Intel i7-11370H @ 3.30GHz (Tiger Lake, AVX2+FMA+AVX512)
 - 工作目录约定：`/tmp/fusion/`
-- SSH 工具用法：`python d:\precious_speed\ssh_exec.py "cmd1" "cmd2"` / `--file local remote` / `--get remote local`
 
 ### 当前 fusion.cpp 状态（v2, 基线）
 - 基础：archieve/cpp/moptm.cpp + `#pragma GCC optimize("O3,unroll-loops")` + 64KB 查表法 parse

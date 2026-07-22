@@ -168,10 +168,7 @@ https://github.com/AZZRCN/precious-speed
 
 ### 5.1 VM 凭据泄漏历史
 
-**2026-07-23 发现**：`ssh_manager.py` 和 100+ 个 `scripts/*.py` 硬编码了 VM 凭据：
-- HOST: 192.168.1.55
-- USER: azzr
-- PWD: 1234
+**2026-07-23 发现**：`ssh_manager.py` 和 100+ 个 `scripts/*.py` 硬编码了 VM 凭据（HOST/USER/PWD）。
 
 这些文件在 2026-07-17 的 force-push（90 文件）中**可能已推送到 GitHub 公开仓库**。
 
@@ -184,7 +181,7 @@ https://github.com/AZZRCN/precious-speed
 
 ### 5.3 待办（建议）
 
-- **修改 VM 密码**（当前 1234 已泄漏）
+- **修改 VM 密码**（凭据已泄漏）
 - 考虑用 `git filter-branch` 或 BFG 清除历史中的凭据（可选，但会改写历史）
 - GitHub 仓库设为 private（如果还不是）
 

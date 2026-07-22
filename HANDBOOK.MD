@@ -84,8 +84,7 @@ d:\precious_speed\
 ## 4. 虚拟机访问
 
 - **SSH**: `192.168.1.55`
-- **用户**: `azzr`
-- **密码**: `1234`
+- **用户/密码**: (已移除)
 - **系统**: Ubuntu 7.0.0-28-generic, 2 核
 - **CPU**: Intel i7-11370H @ 3.30GHz (Tiger Lake, AVX2+FMA+AVX512)
 

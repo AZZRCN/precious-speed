@@ -41,6 +41,10 @@ moptm_vec.log
 
 # Winbench 大数据文件 / Large test data
 winbench/*.in
+winbench/*.csv
+
+# AAMP 压缩产物参考（含 VM 路径，untracked）
+shrunk_ADD_v4_ref.cpp
 
 # 临时目录 / Temp directories
 temp/

@@ -1,7 +1,7 @@
 # GCC Benchmark Report - precious_speed 项目
 
 > **用途**: 供负责 GCC 改造的 AI 验证 GCC 功能使用。本文档包含完整的 benchmark 数据、5 次原始运行数据、编译命令、环境信息。
-> **共享资源**: VM (10.144.33.157) 和 D 盘 (d:\precious_speed\) 的所有文件可供验证使用。
+> **共享资源**: VM (192.168.1.55, 本地) 和 D 盘 (d:\precious_speed\) 的所有文件可供验证使用。
 > **生成时间**: 2026-07-18 22:58
 
 ---
@@ -10,8 +10,8 @@
 
 | 项目 | 值 |
 |------|-----|
-| VM IP | 10.144.33.157 |
-| VM 用户/密码 | azzr / 1234 |
+| VM IP | 192.168.1.55 (本地) |
+| VM 用户/密码 | (已移除) |
 | VM 系统 | Ubuntu 26.04 |
 | VM g++ | g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0 |
 | VM CPU | 11th Gen Intel(R) Core(TM) i7-11370H @ 3.30GHz |
