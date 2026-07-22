@@ -11,13 +11,12 @@
 // NOTE: fma 已移除 — 实测 fma 导致 FFT 浮点精度变化, 触发罕见除法余数错误 (broad#134)
 #pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")
 
-// cyclic (2NXN mod B^m-1) 路径: 禁用
-// absSub1 返回值捕获修复 (Bug #1) 不够, 仍有 9/281 失败 (a_max_b_random 等)
-// 根因: qhat_span 额外高位 wrap (Bug #2) + cyclic 精度边界问题
-// 性能回退 ~9% (1M/500k 21.48ms → 23.37ms, perf_counter 精确测量)
-// NOTE: 之前记录的 "2.3x回退" 是 /usr/bin/time 精度不足 (10ms) 导致的误判
-// TODO: 修复 cyclic Bug #2 后重新启用, 恢复剩余 ~9% 性能
-#define DISABLE_2NXN_CYCLIC
+// cyclic (2NXN mod B^m-1) 路径: 重新启用 (方案9d: cyclic_m 增大确保 unwrap 安全)
+// 根因修复: 原 cyclic_m=int_ceil2(len2+1) 只依赖 divisor 长度, 当 this_in>>len2 时
+//   wn=len2+this_in-cyclic_m > cyclic_m → Span 越界 + unwrap 只处理 k=1 时 k>=2 失效
+// 方案9d: cyclic_m=max(int_ceil2(len2+1), int_ceil2((len2+in)/2+1)), 确保 2*cyclic_m>len2+in
+//   大比例(a>>b)时 cyclic_m≈非cyclicFFT/2, 仍保留约2倍FFT提升
+//#define DISABLE_2NXN_CYCLIC
 
 #ifndef HINT_MINI_HPP
 #define HINT_MINI_HPP
@@ -3155,7 +3154,13 @@ namespace hint
             // 1M/500k: m=131072 (vs 线性卷积 262144), FFT 减半
             // unwrap: prod_low = C - window_high (GMP 近似, 修正循环处理误差)
             thread_local std::vector<double> divisor_dft_mod_buf;
-            size_t cyclic_m = int_ceil2(len2 + 1);
+            // FIX: cyclic_m 需满足 2*cyclic_m > len2+in >= len2+this_in, 否则:
+            //   wn = len2+this_in-cyclic_m > cyclic_m → Span(ptr,wn) 越界 + (cyclic_m-wn) 下溢
+            //   且 unwrap 只处理一次 wrap (k=1), k>=2 时残差完全错误
+            // 方案: 取 max(int_ceil2(len2+1), int_ceil2((len2+in)/2+1))
+            //   2*int_ceil2((len2+in)/2+1) >= len2+in+2 > len2+in >= len2+this_in ✓
+            // 性能: 大比例(a>>b)时 cyclic_m≈非cyclicFFT/2, 仍保留约2倍FFT提升
+            size_t cyclic_m = std::max(int_ceil2(len2 + 1), int_ceil2((len2 + in) / 2 + 1));
             if (divisor_dft_mod_buf.size() < cyclic_m) divisor_dft_mod_buf.resize(cyclic_m);
 #endif
 
@@ -3281,11 +3286,14 @@ namespace hint
                         // GMP L229: ASSERT_ALWAYS (cx >= cy) — GMP 保证, moptm 可能违反
                         // GMP L230: mpn_incr_u (tp, cx - cy) — 用有符号运算正确处理 cx < borrow
                         int32_t incr_signed = int32_t(cx) - int32_t(borrow);
-                        if (incr_signed > 0) {
-                            absAdd1(prod_mod_span, 1, prod_mod_span);  // tp += 1
-                        } else if (incr_signed < 0) {
-                            absSub1(prod_mod_span, 1, prod_mod_span);  // tp -= 1
-                        }
+                        // FIXED: 移除 ±1 调整 — 原 ±1 调整方向错误导致 qhat 偏差
+                        // 让 tprod = P_low (Case A) 或 P_low+1 (Case B), 由 r-based 修正循环处理残差
+                        // 验证: 1000/1000 fuzz PASS, DIV 1M/500k 18.23ms (+22% vs cyclic-disabled)
+                        // if (incr_signed > 0) {
+                        //     absAdd1(prod_mod_span, 1, prod_mod_span);  // tp += 1
+                        // } else if (incr_signed < 0) {
+                        //     absSub1(prod_mod_span, 1, prod_mod_span);  // tp -= 1
+                        // }
                     }
                     // 不重建 prod 高位! 真实 prod 高 wn 位由 r-based 修正循环处理
                 }
