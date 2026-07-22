@@ -698,6 +698,68 @@ inline uint16_t str4toi(const char *s) {
 
 ### DIV RE/WA 根因分析
 
+**根因**: cyclic (2NXN mod B^m-1) 路径存在 Bug #2 — `cyclic_m = int_ceil2(len2+1)` 只依赖 divisor 长度,
+当 `this_in >> len2`（大比例除法 a>>b）时 `wn = len2+this_in-cyclic_m > cyclic_m`,
+导致 `Span(ptr, wn)` 越界 + `(cyclic_m - wn)` 下溢 + unwrap 只处理 k=1 时 k>=2 完全失效。
+
+**紧急修复** (commit 653c5f1): 禁用 cyclic 路径 (`#define DISABLE_2NXN_CYCLIC`), 牺牲 ~9% 性能换取正确性。
+- cyclic禁用: 1M/500k 23.37ms, 0 FAIL
+- cyclic启用(buggy): 1M/500k 21.48ms, 有 RE/WA
+
+## cyclic Bug #2 最终修复（2026-07-22）
+
+### 修复方案: 方案9d + 移除 ±1 调整
+
+**方案9d** (L3163): `cyclic_m = max(int_ceil2(len2+1), int_ceil2((len2+in)/2+1))`
+- 确保 `2*cyclic_m > len2+in >= len2+this_in`, 防止 unwrap 越界
+- 大比例(a>>b)时 `cyclic_m ≈ 非cyclicFFT/2`, 仍保留约2倍FFT提升
+- 单独方案9d: 952/1000 PASS, 48 FAIL（全部 qhat 偏小）
+
+**移除 ±1 调整** (L3289-3296): 注释掉 unwrap 的 `incr_signed` ±1 调整逻辑
+- 原 ±1 调整方向错误导致 qhat 偏差
+- 移除后 `tprod = P_low` (Case A) 或 `P_low+1` (Case B), 由 r-based 修正循环处理残差
+- 方案9d + 移除±1: **1000/1000 PASS, 0 FAIL**
+
+### 排除的方案（累计）
+
+| # | 方案 | FAIL/1000 | 说明 |
+|---|------|:-:|------|
+| 1 | qhat_span[this_in]非零导致wrap | - | 上一session排除 |
+| 2 | r-based修正不收敛 | - | 上一session排除 |
+| 3 | 方案A（直接计算高位） | 257/650 | 上一session排除 |
+| 4 | 实际余数wrap导致漏检 | - | 上一session排除, wrap=0 |
+| 5 | 跳过r<0 decrement单独 | 258/1000 | 上一session排除 |
+| 6 | 直接比较替代r-based单独 | 534/1000 | 上一session排除 |
+| 7 | 方案9d + skip r<0 | 257/1000 | 全部qhat偏大, 更差 |
+| 8 | 方案9d单独 | 48/1000 | 全部qhat偏小 |
+| **9** | **方案9d + 移除±1** | **0/1000** | **✓ 通过** |
+
+### 关键发现
+
+1. **absInvNewton 不保证 inv 偏小**: 方案9d+skip r<0 导致257 FAIL全部qhat偏大, 证明 r<0 不全是假阴性
+2. **±1 调整方向错误**: 移除±1后让 r-based 修正循环（双向）自行处理残差, 完全正确
+3. **r-based 双向修正是必要的**: 因 absInvNewton 可能产生偏大 inv, 不能只做单向修正
+
+### 性能数据
+
+| 配置 | DIV 1M/500k | FAIL/1000 | commit |
+|------|:-:|:-:|------|
+| cyclic禁用 (baseline) | 23.37ms | 0 | 1b8414e |
+| cyclic启用 (buggy) | 21.48ms | RE/WA | cb93374 |
+| **方案9d + 移除±1 (最终)** | **18.23ms** | **0** | **df9c194** |
+
+**性能提升**: 23.37ms → 18.23ms = **+22%** (vs cyclic禁用)
+**比 buggy cyclic 更快**: 21.48ms → 18.23ms = **+15%** (移除±1简化逻辑)
+
+### 当前 O2 最快版本
+
+- **文件**: `moptm_fusion.cpp` (commit df9c194)
+- **DIV 1M/500k**: 18.23ms (7 runs: 16.65, 17.25, 17.29, 18.23, 18.75, 18.98, 19.02)
+- **ADD/MUL**: 通过三模式 #define 切换 (默认 HINT_OP_DIV)
+- **编译**: `g++ -O2 -std=gnu++20 -static -DONLINE_JUDGE moptm_fusion.cpp -o moptm -pthread`
+- **正确性**: 1000/1000 fuzz PASS (含大比例 a>>b, power-of-2 aligned, near-boundary 等)
+
+
 **之前判断"assert bug是已存在问题，LC测试数据不覆盖"是错误的！** LC 真实数据会触发：
 
 1. **assert(rem==0) L3662** — 反归一化失败（medium_02, large_00/01, r_nearly_zero_01/02, burnikel_ziegler_02/03, a_max_b_random_02）
@@ -778,12 +840,18 @@ ADD 第一名使用了 `#pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")`。
 ### 当前 git 提交链
 
 ```
+df9c194 fix(div): re-enable cyclic path with cyclic_m fix and remove +/-1 adjustment
+1b8414e test: 2130/2130 large-scale verification PASS for ADD/MUL/DIV, O2 phase complete
+7fab041 docs: correct cyclic regression 2.3x -> ~9% with precise perf_counter benchmark
+3cbbd31 fix(div): absDivMu correction 2 carry propagation bug
 cb93374 feat: add #pragma GCC target(avx2,bmi,bmi2,popcnt,lzcnt)
 ddb58ce feat(add): int64 fast path for small numbers (<=18 digit)
 653c5f1 fix(div): disable cyclic (2NXN mod B^m-1) path - LC RE/WA fix
 d52c34c chore: simplify header to AZZRCN/GitHub, add tri-mode #define switch
 bce52be feat(div): enable absInvNewtonGMP as default Newton inverse
 ```
+
+**最新状态** (df9c194): cyclic Bug #2 最终修复完成, 1000/1000 fuzz PASS, DIV 1M/500k 18.23ms (+22% vs cyclic-disabled)
 
 ### 提交文件格式
 
