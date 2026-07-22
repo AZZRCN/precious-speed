@@ -4186,9 +4186,8 @@ namespace {
         if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
     }
 
-    // === ADD 小数字快速路径: T 大但数字短 (LC small_00: T=200000, 数字 1-18 位) ===
-    // 尝试解析 <= 18 位数字为 int64, 跳过 Integer 对象开销
-    // OPT: 4 字节一组 parse (str4toi), 乘法次数 18→5, 串行依赖链长度 18→5
+    // === ADD small_00 fast path: T=200000, digits 1-18 (int64) ===
+    // OPT: SWAR 8-byte digit validation + 4-byte grouped parse
     static inline bool tryParseI64(const char *start, size_t len, int64_t &val) {
         if (len == 0 || len > 19) return false;
         bool neg = false;
@@ -4200,11 +4199,21 @@ namespace {
         }
         size_t digit_len = len - i;
         if (digit_len == 0 || digit_len > 18) return false;
-        // 验证所有字符都是数字 (向量化, 无串行依赖)
-        for (size_t j = i; j < len; j++) {
+        // SWAR digit validation: 8 bytes at a time
+        // byte b is digit iff (b - 0x30) < 10; check via (sub + 0x76) bit7
+        size_t j = i;
+        while (j + 8 <= len) {
+            uint64_t data;
+            std::memcpy(&data, start + j, 8);
+            uint64_t sub = data - 0x3030303030303030ULL;
+            uint64_t mask = (sub + 0x7676767676767676ULL) & 0x8080808080808080ULL;
+            if (mask) return false;
+            j += 8;
+        }
+        for (; j < len; j++) {
             if (start[j] < '0' || start[j] > '9') return false;
         }
-        // 4 字节一组 parse (已验证, str4toi 减少 64-bit 乘法次数)
+        // 4-byte grouped parse (str4toi reduces 64-bit multiply count)
         int64_t v = 0;
         while (len - i >= 4) {
             v = v * 10000 + hint::str4toi(start + i);
