@@ -124,7 +124,6 @@ https://github.com/AZZRCN/precious-speed
 - 用户说"继续"即继续推进任务
 
 ### 4.2 代码约束
-- **div_opt.cpp 不可查看或使用**
 - 开发必须基于 `div_1st`（第一名的原始代码）
 - `div_work` 是优化版本，无需从头开始
 - `moptm` (masonxiong opt mixed) 只移植 div 组件，移除已有 div 代码
