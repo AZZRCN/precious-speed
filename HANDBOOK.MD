@@ -14,7 +14,7 @@
 
 ## 1. 项目目标
 
-在 LC (Library Checker, judge.yosupo.jp) 真实评测约束下，让单一文件在 ADD/MUL/DIV 三个问题上同时达到或超越 `best/` 目录下三个独立文件的成绩。
+在 LC (Library Checker, judge.yosupo.jp) 真实评测约束下，让单一文件在 ADD/MUL/DIV 三个问题上达到或超越 `best/` 目录下记录的当前 #1 快照成绩。`best/` 是"宝座"，存放当前 LC #1 代码快照，易位根据 LC 实测排名判断。
 
 ### LC 评测环境（详见 limits.md，2026-07-23 用 langs.toml 一手数据查证）
 - 编译：`g++ -O2 -std=c++23 -DEVAL -DONLINE_JUDGE -march=native -o main main.cpp -I /opt/ac-library`
@@ -59,23 +59,28 @@
 
 ```
 d:\precious_speed\
-├── best/              # 融合源头（只读参考）
-│   ├── add.cpp        # best ADD 18ms
-│   ├── mul.cpp        # best MUL 36ms
-│   └── div.cpp        # best DIV 108ms
+├── best/              # 当前 #1 快照（宝座），易位根据 LC 实测排名判断
+│   ├── add.cpp        # 16ms
+│   ├── mul.cpp        # 36ms
+│   └── div.cpp        # 87ms
 ├── add.cpp            # O2 ADD #1 (16ms)
 ├── mul.cpp            # O2 MUL #1 tied (36ms)
 ├── div.cpp            # O2 DIV #1 (87ms)
-├── fast_io.cpp        # 快读快写独立 benchmark
+├── HANDBOOK.MD        # 本文件
+├── O3_HANDOVER.md     # O3 周期交接文档
+├── ai.bat             # 命令集中文件
+├── docs/              # O3 周期保留文档
+│   ├── limits.md      # LC 真实编译环境
+│   ├── O3_DEV_LOG.md  # O3 开发日志
+│   ├── GMP_DEV.md     # GMP 移植记录
+│   └── GMP_INVERTAPPR_SOURCE.md
+├── asm/               # 汇编对比（O3 预展开验证用）
+├── gmp_index/         # GMP 源码阅读索引
 ├── toolbox/           # 自定义工具箱（tbx.exe, sam/es/split 命令）
 ├── archieve/          # 已归档的历史文件
-│   ├── cpp/           # 旧 .cpp/.hpp/.s
-│   ├── scripts/       # 旧 .sh/.py
-│   └── docs/          # 旧交接文档 + HANDBOOK_O2.md
-├── scripts/           # 当前脚本
-├── HANDBOOK.MD        # 本文件
-├── ssh_exec.py        # SSH 工具（在 scripts/ 下）
-├── limits.md          # LC 环境清单
+│   ├── cpp/           # 旧 .cpp/.hpp/.s + fast_io.cpp
+│   ├── docs/          # 旧文档 + HANDBOOK_O2.md
+│   └── scripts/       # 旧 .sh/.py（含 VM 路径）
 └── .gitignore
 ```
 

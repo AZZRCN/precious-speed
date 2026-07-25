@@ -40,7 +40,7 @@
 
 ## 1. 项目概述
 
-在 LC 真实评测约束下，让单一文件在 ADD/MUL/DIV 三个问题上同时达到或超越 `best/` 目录下三个独立文件的成绩。
+在 LC 真实评测约束下，让单一文件在 ADD/MUL/DIV 三个问题上达到或超越 `best/` 目录下记录的当前 #1 快照成绩。`best/` 是"宝座"，存放当前 LC #1 代码快照，易位根据 LC 实测排名判断。
 
 ### 三题地址
 - ADD: https://judge.yosupo.jp/problem/addition_of_big_integers
@@ -54,20 +54,19 @@ https://github.com/AZZRCN/precious-speed
 
 ## 2. O2 周期成果（已结束）
 
-| 题目 | 提交ID | 耗时 | 排名 | best 耗时 |
+| 题目 | 提交ID | 耗时 | 排名 | 提交时 best 耗时（历史 gold standard） |
 |---|---|---|---|---|
 | ADD | #387304 | **16 ms** | **#1** | 18ms |
 | MUL | #387374 | **36 ms** | **#1 (tied)** | 36ms |
 | DIV | #387301 | **87 ms** | **#1** | 108ms |
 
-**O2 三题全部 #1。DIV 断崖式领先（快 19%）。**
+**O2 三题全部 #1。DIV 断崖式领先（快 19%）。** 提交后 `best/` 已易位为本项目代码（宝座）。
 
 ### 核心文件
 - `add.cpp` (~4600行) — ADD 优化完成
 - `mul.cpp` (~4800行) — basicMul 已重写为 BASE=10^8 打包版本
 - `div.cpp` (~4600行) — DIV 优化完成，inv precision boost 消除 basicMul fallback
-- `best/` — 三题最快 LC 提交（add.cpp 18ms / mul.cpp 36ms / div.cpp 108ms），gold standard
-- `fast_io.cpp` — I/O 实现参考
+- `best/` — 当前 #1 快照（宝座），当前内容即本项目 add/mul/div（16/36/87ms），易位根据 LC 实测排名判断
 
 ### 技术栈
 - hint 库（radix-4 auto-vec FFT，无 splitting，dedicated square path，thread_local buffer）
@@ -227,28 +226,29 @@ precious_speed/
 ├── HANDBOOK.MD             # 项目总览（已更新 LC 环境）
 ├── README.md
 ├── ai.bat                  # 命令集中文件
-├── add.cpp / mul.cpp / div.cpp  # O2 三题成品（#1）
-├── fast_io.cpp             # I/O 参考
-├── shrunk_ADD_v4_ref.cpp   # AAMP 压缩产物参考（untracked，有价值）
-├── .gitignore              # 已更新隐私排除
-├── best/                   # gold standard（add 18ms / mul 36ms / div 108ms）
-├── docs/
+├── add.cpp / mul.cpp / div.cpp  # O2 三题成品（#1，当前 best/ 快照源）
+├── .gitignore              # 隐私排除（ssh_manager.py/scripts/winbench/temp/shrunk_*）
+│
+├── best/                   # 当前 #1 快照（宝座），易位根据 LC 实测排名判断
+│   ├── add.cpp / mul.cpp / div.cpp  # 16/36/87ms（O2 周期提交后易位）
+│
+├── docs/                   # O3 周期保留文档
 │   ├── limits.md           # LC 真实编译环境（langs.toml 一手数据）
 │   ├── O3_DEV_LOG.md       # O3 开发日志
-│   ├── GMP_DEV.md / GMP_INVERTAPPR_SOURCE.md
-│   ├── FFT_MULMOD_INTEGRATION_DESIGN.md
-│   ├── GCC_BENCH_REPORT.md
-│   ├── MOPTM_FUSION_OPTIMIZATIONS.md
-│   ├── VM_BENCH_20260720.md
-│   └── CLEANUP_LOG.md
-├── gmp_index/              # GMP 源码阅读索引
-├── asm/                    # 汇编对比（O2/O3/NOVEC/PRG）
-├── archieve/               # O2 周期归档
+│   ├── GMP_DEV.md          # GMP 移植开发记录
+│   └── GMP_INVERTAPPR_SOURCE.md  # GMP 近似逆源码分析
+│
+├── asm/                    # 汇编对比（O2/O3/NOVEC/PRG，O3 预展开验证用）
+├── gmp_index/              # GMP 源码阅读索引（DIV 移植 GMP 参考）
+│
+├── archieve/               # 归档（O2 周期 + 本周期整理归档）
 │   ├── HANDOVER.md
 │   ├── OPTIMIZATION_SUMMARY.md
-│   ├── cpp/                # 旧测试代码
-│   ├── docs/               # O2 HANDBOOK 等
+│   ├── add_test.txt        # 旧测试文件
+│   ├── cpp/                # 旧测试代码 + fast_io.cpp（I/O 参考，已归档）
+│   ├── docs/               # O2 HANDBOOK + CLEANUP_LOG/FFT_MULMOD/GCC_BENCH/MOPTM_FUSION/VM_BENCH
 │   └── scripts/            # 旧脚本（仍 tracked，含 VM 路径，待清理）
+│
 ├── toolbox/                # tbx 工具箱源码
 └── .trae/specs/o3-source-expansion/  # O3 预展开 spec
     ├── spec.md
@@ -256,12 +256,13 @@ precious_speed/
     └── tasks.md
 ```
 
-### 已从 git 移除（本地保留）
+### 已从 git 移除（本地保留，untracked）
 - `ssh_manager.py` — VM SSH 管理（含凭据）
 - `scripts/` — 全部开发脚本（含 VM 凭据/路径）
 - `winbench/` — 大测试数据
 - `temp/` — 临时文件
 - `exploration/` — 无关项目探索记录
+- `shrunk_ADD_v4_ref.cpp` — AAMP 压缩产物参考（含 VM 路径，有价值，本地保留）
 
 ---
 
