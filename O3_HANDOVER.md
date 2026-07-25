@@ -124,21 +124,13 @@ https://github.com/AZZRCN/precious-speed
 - 用户说"继续"即继续推进任务
 
 ### 4.2 代码约束
-- 开发必须基于 `div_1st`（第一名的原始代码）
-- `div_work` 是优化版本，无需从头开始
-- `moptm` (masonxiong opt mixed) 只移植 div 组件，移除已有 div 代码
+- O3 周期基于当前 `add.cpp`/`mul.cpp`/`div.cpp`（O2 #1 成品，即 `best/` 快照源）
 - BASE=10^4（无需 BASE 转换）
 - I/O 必须用 fread + oBuffer
 - hint library 统一基库
 - 程序必须包含 5 秒超时机制，避免阻塞命令行
 - 代码注释语言：跟随用户最新指令（中文或全英文）
-- `moptm.cpp` 覆盖写入
 - 编译器参数式代码生成（如 O3 优化段）必须产出 CPP 文件（不是 EXE）
-
-### 4.3 O2 选项特殊约束
-- 不迁移 GMP 算法（已迁移并验证的部分保留）
-- DIV/MUL/ADD 最大优化尝试 + 大规模对拍
-- O3 优化现在允许开发（用户 O3 预展开项目进行中）
 
 ### 4.4 沟通方式
 - 不要用夸赞语气（除非明确要求）
