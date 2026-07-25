@@ -82,34 +82,15 @@ https://github.com/AZZRCN/precious-speed
 
 用户既定路线："先开发 O2，O2 到极限之后再开发 O3"。
 
-`#pragma GCC optimize("O3")` 在 LC 上增益 <1ms（用户实测，噪声级）。原因推测：GCC 15.2 的 O2 已原生包含大量旧版本 O3 优化。因此 **O3 预展开是唯一路径**——把 O3 GIMPLE IR 回转成 C++ 源码，再用 LC 的 O2 编译。
+LC 实测：O2 和 `#pragma GCC optimize("O3")` 效果一致。推测是 LC 编译器禁用了 O3 优化（就像洛谷）。
 
-### 3.2 技术架构（GCC MODIFIELD 项目）
+仍然允许在本地测试使用 O3 选项。
 
-三大组件：
-1. **GCC 修改版**：基于 GCC 11.4.0 源码，新增 `-fo3-pre-expand` 开关，将 O3 优化的 GIMPLE IR 转回 C++ 源码
-2. **GIMPLE-to-C++ emitter**：将 GIMPLE IR（PHI 节点、SS 名、CFG）转回合法 C++20 源码。产出 670KB 的 `moptm_pre_ADD.cpp`
-3. **AAMP (Automatic Association-Mining of Patterns)**：自主压缩算法，发现可复用模式并替换，含权衡回退。670KB → 161KB
+### 3.2 GCC 修改版
 
-### 3.3 当前状态
+用户有一个叫"GCC 修改版"的工具，能够保证 O3 预展开的提交效果。
 
-- GCC MODIFIELD 基于 **GCC 11.4.0**
-- LC 实际用 **GCC 15.2**
-- **版本错配**：用户判断"GIMPLE 回转应该没啥影响"（因为产出的是合法 C++ 源码，不是 GIMPLE IR 本身）
-- **对策**：用户决定把 `-fo3-pre-expand` 移植到 GCC 15.2（用 diff 扫 11.4 vs 15.2 的 O3 pass 差异）
-- `shrunk_ADD_v4_ref.cpp` 是 AAMP 压缩产物参考（161KB），含 CFPE 宏（跨函数模式提取）和 AAMP 宏（多趟层级压缩）
-
-### 3.4 AAMP 动机
-
-- LC 源码限制 256KB，670KB 交不上去
-- 避免作弊嫌疑（虽然大家都 pragma O3 了）
-- 压缩到 256KB 以内，且算法能力可压缩更多内容
-
-### 3.5 参考文件
-
-- `shrunk_ADD_v4_ref.cpp` — AAMP/CFPE 压缩产物参考（只读，有价值）
-- `D:\gcc modifield\moptm_pre_ADD.cpp` — GIMPLE-TO-CPP 产出（670KB，**最多查看两次**）
-- `temp/gimple-to-cpp.c` — GIMPLE-to-C++ emitter 源码（已从 git 移除，本地保留）
+**O3 开发周期基本结束后，再去询问用户了解 GCC 修改版的进一步内容。当前不需要了解细节。**
 
 ---
 
@@ -194,17 +175,13 @@ https://github.com/AZZRCN/precious-speed
 
 ## 7. O3 周期待办
 
-1. **移植 `-fo3-pre-expand` 到 GCC 15.2**（用户决定，用 diff 扫 11.4 vs 15.2）
-2. 重新生成 `moptm_pre_ADD.cpp`（用 GCC 15.2 修改版）
-3. AAMP 压缩到 256KB 以内
-4. 提交 LC 验证 O3 预展开实际增益
-5. 如果 ADD 成功，扩展到 MUL/DIV
-6. 更新 HANDBOOK.MD 记录 O3 进度
+1. O3 预展开开发（使用 GCC 修改版，细节待开发周期结束后询问用户）
+2. 提交 LC 验证实际增益
+3. 更新 HANDBOOK.MD 记录 O3 进度
 
 ### 待实测验证项（来自 limits.md）
 - `-std=c++23` 是否启用 GNU 扩展（`__int128`、语句表达式、`__builtin` 系列）
 - AVX-512 在 Milan 256-bit 通路下的实际增益
-- 670KB 预展开源码在 GCC 15.2 下编译是否超时
 - AC Library 1.6 包含哪些模块
 
 ---
