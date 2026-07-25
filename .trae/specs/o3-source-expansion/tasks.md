@@ -45,7 +45,7 @@
   - [ ] 跳转到阶段 5（方案 E）
 - [ ] Task 2.3: 若 LC 接受 asm 块
   - [ ] 记录 LC 真实成绩（CPU 时间、内存）
-  - [ ] 与 best LC ADD 18ms 对比
+  - [ ] 与 best/ 当前 #1 快照对比
   - [ ] 继续 阶段 3
 
 ## 阶段 3：方案 B 全函数覆盖
@@ -128,7 +128,7 @@
 - [ ] Task 7.3: 提交 DIV 模式
   - [ ] 同上，`-DHINT_OP_DIV`
 - [ ] Task 7.4: 汇总 LC 真实成绩
-  - [ ] 对比 best LC 历史：ADD 18ms / MUL 36ms / DIV 108ms
+  - [ ] 对比 best/ 当前 #1 快照
   - [ ] 记录到 HANDBOOK.MD
 
 ## 阶段 8：疯狂优化阶段（不停歇）
