@@ -1,0 +1,62 @@
+{
+  "name": "minpar",
+  "base_src": "best/div_D47.cpp",
+  "patch": [
+    {
+      "old": "constexpr size_t MIN_PAR = 2048;   // 小规模并行化不划算, 走原串行路径",
+      "new": "constexpr size_t MIN_PAR = CPS_MIN_PAR;   // [vmbench] 参数化"
+    }
+  ],
+  "guard": "#ifndef CPS_MIN_PAR\n#define CPS_MIN_PAR 2048\n#endif\n",
+  "variants": [
+    {
+      "name": "P2048",
+      "defines": [
+        "CPS_MIN_PAR=2048"
+      ]
+    },
+    {
+      "name": "P1024",
+      "defines": [
+        "CPS_MIN_PAR=1024"
+      ]
+    },
+    {
+      "name": "P512",
+      "defines": [
+        "CPS_MIN_PAR=512"
+      ]
+    },
+    {
+      "name": "P256",
+      "defines": [
+        "CPS_MIN_PAR=256"
+      ]
+    },
+    {
+      "name": "P128",
+      "defines": [
+        "CPS_MIN_PAR=128"
+      ]
+    },
+    {
+      "name": "P64",
+      "defines": [
+        "CPS_MIN_PAR=64"
+      ]
+    }
+  ],
+  "baseline": "P2048",
+  "cases": [
+    "r_nearly_zero_01",
+    "burnikel_ziegler_bound_02",
+    "a_max_b_random_02",
+    "burnikel_ziegler_bound_00",
+    "length_ratio_integer_03",
+    "large_00",
+    "medium_01"
+  ],
+  "reps": 25,
+  "warmup": 3,
+  "metric": "cycles"
+}

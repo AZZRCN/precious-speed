@@ -1,0 +1,7 @@
+ts,host,op,case,label,min_ms,med_ms,all_ms,tag
+20260730_165628,local,add,add_max_0.in,max0,14.7,15.3,"15.7,15.3,14.7",max_validate
+20260730_165628,local,add,add_max_1.in,max1,13.6,14.1,"14.3,14.1,13.6",max_validate
+20260730_165628,local,mul,mul_max_0.in,max0,23.4,24.8,"24.8,23.4,25.1",max_validate
+20260730_165628,local,mul,mul_max_1.in,max1,24.1,24.3,"24.1,26.1,24.3",max_validate
+20260730_165628,local,div,div_max_0.in,max0,38.8,39.4,"39.9,39.4,38.8",max_validate
+20260730_165628,local,div,div_max_2.in,max2,43.6,44.1,"44.3,44.1,43.6",max_validate

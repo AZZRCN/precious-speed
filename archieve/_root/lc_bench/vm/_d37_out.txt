@@ -1,0 +1,25 @@
+[1] PUSH ok -> /home/azzr/divbench/div_D37.cpp
+[2] COMPILE rc=0
+BUILD_DONE
+
+[3] BYTECHECK rc=0
+byte-exact d37    vs d25   (26 cases): ALL MATCH
+
+[4] burnikel_ziegler_bound_02      D37 Ir=277652349   D34 Ir=304310969
+      basicMul     D37=-           (-%)  D34=43415589    (14.27%)
+      absAddMul1   D37=18732978    (6.75%)  D34=-           (-%)
+      absMul1      D37=28029816    (10.10%)  D34=27583608    (9.06%)
+      absSub       D37=22663189    (8.16%)  D34=22663189    (7.45%)
+[4] r_nearly_zero_01               D37 Ir=262756864   D34 Ir=284860944
+      basicMul     D37=-           (-%)  D34=36554828    (12.83%)
+      absAddMul1   D37=14737295    (5.61%)  D34=-           (-%)
+      absMul1      D37=86544620    (32.94%)  D34=86117368    (30.23%)
+      absSub       D37=63613437    (24.21%)  D34=63613437    (22.33%)
+[4] length_ratio_integer_02        D37 Ir=285054616   D34 Ir=287891337
+
+--- D37 vs D34 (Ir) ---
+burnikel_ziegler_bound_02         304310969 ->    277652349   -8.76%
+r_nearly_zero_01                  284860944 ->    262756864   -7.76%
+length_ratio_integer_02           287891337 ->    285054616   -0.99%
+HEADLINE(max)     304310969 ->    285054616   -6.33%
+DONE

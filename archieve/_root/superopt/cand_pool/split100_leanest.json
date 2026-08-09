@@ -1,0 +1,30 @@
+{
+  "name": "split100_leanest",
+  "saved": "2026-08-07 21:07:32",
+  "verify": {
+    "kind": "split100"
+  },
+  "n_cands": 2,
+  "cands": [
+    {
+      "cyc": 10.0,
+      "cp": 10,
+      "res": 2.0,
+      "uops": 6,
+      "insns": 6,
+      "exprs": {
+        "p": "or(shr(mul(x,5243),19),shl(sub(x,mul(100,shr(mul(x,5243),19))),32))"
+      }
+    },
+    {
+      "cyc": 10.0,
+      "cp": 10,
+      "res": 2.0,
+      "uops": 6,
+      "insns": 6,
+      "exprs": {
+        "p": "sub(shr(mul(x,5243),19),shl(sub(mul(100,shr(mul(x,5243),19)),x),32))"
+      }
+    }
+  ]
+}

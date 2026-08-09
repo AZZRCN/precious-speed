@@ -1,0 +1,18 @@
+{
+ "id": "so-accept-99358670",
+ "name": "so-accept",
+ "cmd": [
+  "python",
+  "superopt/so.py",
+  "search",
+  "digits2_leanest"
+ ],
+ "pid": 7540,
+ "started": 1786099358.722361,
+ "timeout": 400.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786099383.6671584,
+ "out": "D:\\precious_speed\\.jobs\\so-accept-99358670.out"
+}

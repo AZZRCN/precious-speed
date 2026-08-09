@@ -1,0 +1,20 @@
+{
+ "id": "d48-v2-06026461",
+ "name": "d48-v2",
+ "cmd": [
+  "python",
+  "local_verify.py",
+  "D48",
+  "D47",
+  "--gen",
+  "400"
+ ],
+ "pid": 12204,
+ "started": 1786106026.4667556,
+ "timeout": 3600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786106072.2590618,
+ "out": "D:\\precious_speed\\.jobs\\d48-v2-06026461.out"
+}

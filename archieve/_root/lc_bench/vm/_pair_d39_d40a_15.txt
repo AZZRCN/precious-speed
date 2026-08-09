@@ -1,0 +1,64 @@
+reps=15 warm=2  bins=d39,d40a
+case                                  d39       d40a    r_d40a
+length_ratio_integer_00             30.33      29.54     0.978
+r_nearly_zero_01                    28.35      28.59     0.999
+burnikel_ziegler_bound_02           27.25      27.50     1.017
+length_ratio_integer_02             27.08      27.21     1.008
+length_ratio_integer_01             26.11      25.73     0.986
+length_ratio_integer_03             25.03      24.96     0.981
+burnikel_ziegler_bound_00           23.39      23.69     1.006
+length_ratio_integer_05             22.87      23.05     1.009
+burnikel_ziegler_bound_03           22.38      22.60     1.010
+a_max_b_random_02                   22.33      21.81     1.007
+medium_01                           22.01      22.02     1.018
+large_01                            21.97      22.18     1.004
+length_ratio_integer_04             21.97      22.12     1.004
+medium_02                           21.47      22.09     1.014
+a_max_b_random_01                   21.46      21.66     1.009
+burnikel_ziegler_bound_01           21.25      21.08     1.000
+large_00                            19.66      19.59     0.998
+r_nearly_zero_02                    18.83      18.75     1.007
+medium_00                           16.47      16.74     0.995
+r_nearly_zero_00                    15.99      16.18     1.001
+a_max_b_random_00                   15.36      15.21     1.004
+small_00                            12.41      12.40     0.993
+max_01                               4.82       5.00     0.967
+max_02                               3.45       3.51     0.963
+max_00                               3.14       3.17     1.035
+example_00                           1.41       1.37     1.014
+
+SCORE(max) d39      =    30.33 ms   @length_ratio_integer_00
+SCORE(max) d40a     =    29.54 ms   @length_ratio_integer_00
+
+median-of-ratios d40a     vs d39      = 1.0041  (min 0.963 max 1.035)
+
+=== per-case ratio distribution (all 15 paired reps) ===
+case                                                 r_d40a
+length_ratio_integer_00        [0.961 0.978 1.014]      
+r_nearly_zero_01               [0.977 0.999 1.026]      
+burnikel_ziegler_bound_02      [0.986 1.017 1.033]      
+length_ratio_integer_02        [0.968 1.008 1.024]      
+length_ratio_integer_01        [0.959 0.986 1.022]      
+length_ratio_integer_03        [0.967 0.981 1.017]      
+burnikel_ziegler_bound_00      [0.990 1.006 1.028]      
+length_ratio_integer_05        [0.959 1.009 1.032]      
+burnikel_ziegler_bound_03      [0.981 1.010 1.022]      
+a_max_b_random_02              [0.936 1.007 1.047]      
+medium_01                      [0.940 1.018 1.032]      
+large_01                       [0.991 1.004 1.039]      
+length_ratio_integer_04        [0.967 1.004 1.030]      
+medium_02                      [0.991 1.014 1.048]      
+a_max_b_random_01              [0.968 1.009 1.046]      
+burnikel_ziegler_bound_01      [0.985 1.000 1.015]      
+large_00                       [0.976 0.998 1.021]      
+r_nearly_zero_02               [0.968 1.007 1.036]      
+medium_00                      [0.986 0.995 1.010]      
+r_nearly_zero_00               [0.984 1.001 1.021]      
+a_max_b_random_00              [0.977 1.004 1.013]      
+small_00                       [0.944 0.993 1.034]      
+max_01                         [0.936 0.967 1.178]      
+max_02                         [0.844 0.963 1.144]      
+max_00                         [0.852 1.035 1.119]      
+example_00                     [0.792 1.014 1.083]      
+(* = IQR 不跨 1.0, 差异显著)
+DONE

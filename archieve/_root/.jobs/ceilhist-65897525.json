@@ -1,0 +1,16 @@
+{
+ "id": "ceilhist-65897525",
+ "name": "ceilhist",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/vm/_ceilhist.py"
+ ],
+ "pid": 13188,
+ "started": 1786065897.5342622,
+ "timeout": 6000.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786065931.5558207,
+ "out": "D:\\precious_speed\\.jobs\\ceilhist-65897525.out"
+}

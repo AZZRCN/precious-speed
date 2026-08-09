@@ -1,0 +1,17 @@
+{
+ "id": "annot-go-13584411",
+ "name": "annot-go",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "cg_annot.py",
+  "go"
+ ],
+ "pid": 10828,
+ "started": 1786113584.4203613,
+ "timeout": 3600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786113589.2858884,
+ "out": "D:\\precious_speed\\.jobs\\annot-go-13584411.out"
+}

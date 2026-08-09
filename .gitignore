@@ -48,3 +48,17 @@ shrunk_ADD_v4_ref.cpp
 
 # 临时目录 / Temp directories
 temp/
+
+# Agent memory / 不提交
+.workbuddy/
+
+# 大体积可再生数据 / bulk regenerable data (test inputs, run dumps, artifacts)
+*.in
+*.ans
+*.out
+*.dll
+*.tgz
+*.s
+cases/
+cases_lf/
+bench_data/

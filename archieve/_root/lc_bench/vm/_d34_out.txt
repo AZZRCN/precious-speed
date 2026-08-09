@@ -1,0 +1,11 @@
+[1] PUSH ok
+[2] COMPILE rc=0
+BUILD_DONE
+
+[3] BYTECHECK rc=0
+byte-exact d34    vs d25   (26 cases): ALL MATCH
+
+[4a] D34 lri_02 Ir=287891337  5500630 Ir memset
+[4b] D31 lri_02 Ir=296635670  11046825 Ir memset
+[4c] D34 rnz_01 Ir=284860944  no-memset
+[5] lri_02 D34/D31 Ir ratio = 0.9705 (2.95% reduction)

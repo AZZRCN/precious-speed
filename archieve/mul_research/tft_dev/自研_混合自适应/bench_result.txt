@@ -1,0 +1,41 @@
+=== 自研算法方向A：混合自适应大数乘法 实测结果 ===
+日期: 2026-07-31
+环境: O2 -march=native, g++ 15.2.0, Intel i5
+
+=== Calibrate 阈值测定 ===
+T1 test (basicMul vs Karatsuba):
+  n= 16: basic=0.145ms kara=0.369ms ratio=2.545
+  n= 24: basic=0.188ms kara=0.675ms ratio=3.590
+  n= 32: basic=0.194ms kara=1.216ms ratio=6.268
+  n= 40: basic=0.240ms kara=1.547ms ratio=6.446
+  n= 48: basic=0.285ms kara=1.648ms ratio=5.782
+  n= 56: basic=0.352ms kara=2.218ms ratio=6.301
+  n= 64: basic=0.437ms kara=4.251ms ratio=9.728
+  n=128: basic=1.310ms kara=13.167ms ratio=10.051
+  => T1=16 (所有测试点 kara 均比 basic 慢, ratio 2.5-10)
+
+T2 test (Karatsuba vs FFT):
+  n= 64: kara=1.823ms fft=0.932ms ratio=0.511 *FFT*
+  => T2=64
+
+=== 正确性验证 ===
+50 cases PASS
+
+=== Benchmark (每轮耗时 ms) ===
+     N  iters    basic_ms    kara_ms     fft_ms   hybrid  [algo]
+     8   5000      0.0001      0.0001     0.0005   0.0001  [basic]
+    32   2000      0.0004      0.0023     0.0024   0.0023  [kara]
+    64   1000      0.0008      0.0080     0.0044   0.0040  [fft]
+   128    500      0.0021      0.0273     0.0088   0.0089  [fft]
+   256    200      0.0078      0.0891     0.0205   0.0178  [fft]
+   512    100      0.0264      0.2573     0.0393   0.0376  [fft]
+  1024     50      0.0969      0.7905     0.1067   0.1047  [fft]
+  2048     20      0.4171      2.6298     0.2207   0.2584  [fft]
+  4096     10      2.8852     11.3949     0.4743   0.5095  [fft]
+
+=== 结论 ===
+1. Karatsuba 实现极慢 (比 basic 慢 6-10x): std::vector 动态分配 + 递归开销
+2. basic_mul 在 N<=1024 都比 FFT 快 (原型 FFT 常数大)
+3. 阈值 T1=16/T2=64 导致 N=32-1024 选 kara/fft, 但 basic 实际更快
+4. FFT 仅在 N>=2048 才真正优于 basic
+5. 混合自适应无收益: 原型实现无法与生产级代码竞争

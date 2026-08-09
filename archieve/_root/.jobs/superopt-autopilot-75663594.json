@@ -1,0 +1,17 @@
+{
+ "id": "superopt-autopilot-75663594",
+ "name": "superopt-autopilot",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "so.py",
+  "autopilot"
+ ],
+ "pid": 4256,
+ "started": 1786075663.6006129,
+ "timeout": 1800.0,
+ "cwd": "D:/precious_speed/superopt",
+ "state": "done",
+ "rc": null,
+ "ended": 1786076609.1580799,
+ "out": "D:\\precious_speed\\.jobs\\superopt-autopilot-75663594.out"
+}

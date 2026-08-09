@@ -1,0 +1,4 @@
+MULPROF_TOTAL 0.034
+MULPROF parse           0.005 ms  (9 calls,   0.001 avg)
+MULPROF compute         0.012 ms  (9 calls,   0.001 avg)
+MULPROF write           0.017 ms  (9 calls,   0.002 avg)

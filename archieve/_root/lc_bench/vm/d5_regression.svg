@@ -1,0 +1,52 @@
+<svg viewBox="0 0 580 330" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+  <rect width="580" height="330" fill="#ffffff"/>
+  <text x="290" y="20" text-anchor="middle" font-size="13" font-weight="bold" fill="#333">DIV D4 vs D5 关键用例耗时 (ms) — D5 #390191 回归 75→88</text>
+  <rect x="360" y="30" width="12" height="12" fill="#4a90d9"/><text x="376" y="40" font-size="10" fill="#333">D4 #390120</text>
+  <rect x="450" y="30" width="12" height="12" fill="#e8743b"/><text x="466" y="40" font-size="10" fill="#333">D5 #390191</text>
+  <line x1="40" y1="260" x2="560" y2="260" stroke="#999" stroke-width="1"/>
+  <line x1="40" y1="195" x2="560" y2="195" stroke="#eee"/><text x="34" y="198" font-size="8" fill="#999" text-anchor="end">25</text>
+  <line x1="40" y1="131" x2="560" y2="131" stroke="#eee"/><text x="34" y="134" font-size="8" fill="#999" text-anchor="end">50</text>
+  <line x1="40" y1="66" x2="560" y2="66" stroke="#eee"/><text x="34" y="69" font-size="8" fill="#999" text-anchor="end">75</text>
+
+  <!-- g0 r_near_01 -->
+  <rect x="50" y="84" width="30" height="176" fill="#4a90d9"/>
+  <rect x="86" y="35" width="30" height="225" fill="#e8743b"/>
+  <text x="65" y="78" font-size="9" fill="#333" text-anchor="middle">69</text>
+  <text x="101" y="29" font-size="9" fill="#e8743b" text-anchor="middle">88</text>
+  <text x="65" y="276" font-size="8" fill="#333" text-anchor="middle">r_near</text>
+  <text x="65" y="286" font-size="8" fill="#333" text-anchor="middle">_01</text>
+
+  <!-- g1 amax_02 -->
+  <rect x="150" y="79" width="30" height="181" fill="#4a90d9"/>
+  <rect x="186" y="58" width="30" height="202" fill="#e8743b"/>
+  <text x="165" y="73" font-size="9" fill="#333" text-anchor="middle">71</text>
+  <text x="201" y="52" font-size="9" fill="#e8743b" text-anchor="middle">79</text>
+  <text x="165" y="276" font-size="8" fill="#333" text-anchor="middle">amax</text>
+  <text x="165" y="286" font-size="8" fill="#333" text-anchor="middle">_02</text>
+
+  <!-- g2 burn_02 -->
+  <rect x="250" y="125" width="30" height="135" fill="#4a90d9"/>
+  <rect x="286" y="71" width="30" height="189" fill="#e8743b"/>
+  <text x="265" y="119" font-size="9" fill="#333" text-anchor="middle">53</text>
+  <text x="301" y="65" font-size="9" fill="#e8743b" text-anchor="middle">74</text>
+  <text x="265" y="276" font-size="8" fill="#333" text-anchor="middle">burn</text>
+  <text x="265" y="286" font-size="8" fill="#333" text-anchor="middle">_02</text>
+
+  <!-- g3 lenrat_02 -->
+  <rect x="350" y="68" width="30" height="192" fill="#4a90d9"/>
+  <rect x="386" y="68" width="30" height="192" fill="#e8743b"/>
+  <text x="365" y="62" font-size="9" fill="#333" text-anchor="middle">75</text>
+  <text x="401" y="62" font-size="9" fill="#333" text-anchor="middle">75</text>
+  <text x="365" y="276" font-size="8" fill="#333" text-anchor="middle">lenrat</text>
+  <text x="365" y="286" font-size="8" fill="#333" text-anchor="middle">_02</text>
+
+  <!-- g4 全局max -->
+  <rect x="450" y="68" width="30" height="192" fill="#4a90d9"/>
+  <rect x="486" y="35" width="30" height="225" fill="#e8743b"/>
+  <text x="465" y="62" font-size="9" fill="#333" text-anchor="middle">75</text>
+  <text x="501" y="29" font-size="9" fill="#e8743b" text-anchor="middle">88</text>
+  <text x="478" y="276" font-size="8" fill="#333" text-anchor="middle">全局</text>
+  <text x="478" y="286" font-size="8" fill="#333" text-anchor="middle">max</text>
+
+  <text x="40" y="312" font-size="9" fill="#888">评分 = 各用例最大值 → D4 = 75ms，D5 = 88ms（+13ms 回归）。编辑 B 把 r_nearly_zero_01 由 69→88ms，并拖累 burnikel_02(53→74)、a_max_b_random_02(71→79)。</text>
+</svg>

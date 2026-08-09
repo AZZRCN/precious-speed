@@ -1,0 +1,18 @@
+{
+ "id": "minparb-go-15034356",
+ "name": "minparb-go",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "vmbench.py",
+  "cfg_minpar.json",
+  "go"
+ ],
+ "pid": 4672,
+ "started": 1786115034.3662806,
+ "timeout": 3600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786115093.8419082,
+ "out": "D:\\precious_speed\\.jobs\\minparb-go-15034356.out"
+}

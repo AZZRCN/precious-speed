@@ -1,0 +1,17 @@
+[1] PUSH ok
+[2] COMPILE rc=0
+BUILD_DONE
+
+[3] BYTECHECK rc=0
+byte-exact d35    vs d25   (26 cases): ALL MATCH
+
+[4] burnikel cases: ['burnikel_ziegler_bound_00.in', 'burnikel_ziegler_bound_01.in', 'burnikel_ziegler_bound_02.in', 'burnikel_ziegler_bound_03.in']
+[5a] D35 lri_02 Ir=288286067  5500630 Ir __memset
+[5b] D31 lri_02 Ir=296635670  11046825 Ir __memset
+[5c] lri_02 D35/D31 = 0.9719 (2.81%)
+[5a] D35 rnz_01 Ir=284865064  no-memset/absCompare
+[5b] D31 rnz_01 Ir=288883288  no-memset/absCompare
+[5c] rnz_01 D35/D31 = 0.9861 (1.39%)
+[5a] D35 bz Ir=270943380  no-memset/absCompare
+[5b] D31 bz Ir=273103945  no-memset/absCompare
+[5c] bz D35/D31 = 0.9921 (0.79%)

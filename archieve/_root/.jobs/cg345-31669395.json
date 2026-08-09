@@ -1,0 +1,19 @@
+{
+ "id": "cg345-31669395",
+ "name": "cg345",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/vm/_d42_cg.py",
+  "D42",
+  "D44",
+  "D45"
+ ],
+ "pid": 2468,
+ "started": 1786031669.399429,
+ "timeout": 12000.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786031703.425798,
+ "out": "D:\\precious_speed\\.jobs\\cg345-31669395.out"
+}

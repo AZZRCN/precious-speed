@@ -1,0 +1,29 @@
+rc=0
+T=64   burnikel_ziegler_bound_02      Ir=304310967
+T=64   r_nearly_zero_01               Ir=284860942
+T=64   length_ratio_integer_02        Ir=287891335
+T=96   burnikel_ziegler_bound_02      Ir=401304600
+T=96   r_nearly_zero_01               Ir=321580467
+T=96   length_ratio_integer_02        Ir=288393266
+T=128  burnikel_ziegler_bound_02      Ir=463316008
+T=128  r_nearly_zero_01               Ir=321580467
+T=128  length_ratio_integer_02        Ir=288393266
+T=192  burnikel_ziegler_bound_02      Ir=496067978
+T=192  r_nearly_zero_01               Ir=321580467
+T=192  length_ratio_integer_02        Ir=290452905
+
+--- 相对 T=64 (=D34 行为) ---
+  burnikel_ziegler_bound_02      T=64   Ir=304310967    +0.00%
+  burnikel_ziegler_bound_02      T=96   Ir=401304600    +31.87%
+  burnikel_ziegler_bound_02      T=128  Ir=463316008    +52.25%
+  burnikel_ziegler_bound_02      T=192  Ir=496067978    +63.01%
+  r_nearly_zero_01               T=64   Ir=284860942    +0.00%
+  r_nearly_zero_01               T=96   Ir=321580467    +12.89%
+  r_nearly_zero_01               T=128  Ir=321580467    +12.89%
+  r_nearly_zero_01               T=192  Ir=321580467    +12.89%
+  length_ratio_integer_02        T=64   Ir=287891335    +0.00%
+  length_ratio_integer_02        T=96   Ir=288393266    +0.17%
+  length_ratio_integer_02        T=128  Ir=288393266    +0.17%
+  length_ratio_integer_02        T=192  Ir=290452905    +0.89%
+DONE
+

@@ -1,0 +1,18 @@
+{
+ "id": "cpsloop2-31202627",
+ "name": "cpsloop2",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/vm/_cps_loop.py",
+  "D42",
+  "D44"
+ ],
+ "pid": 12100,
+ "started": 1786031202.6278143,
+ "timeout": 3600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786031213.0212572,
+ "out": "D:\\precious_speed\\.jobs\\cpsloop2-31202627.out"
+}

@@ -1,0 +1,5 @@
+Compiler: g++ 15.2.0 (MinGW-Builds, x86_64-win32-seh-rev0)
+CPU: Intel64 Family 6 Model 140 Stepping 1, GenuineIntel
+Compile Date: 2026-07-31
+Options: -std=c++20 -O2 -march=native
+Note: 原型包含运行时阈值测定(calibrate_thresholds)，运行时间较长，run.bat 超时设为 20s

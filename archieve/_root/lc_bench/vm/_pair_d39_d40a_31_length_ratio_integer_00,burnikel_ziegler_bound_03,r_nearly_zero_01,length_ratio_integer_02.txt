@@ -1,0 +1,20 @@
+reps=31 warm=2  bins=d39,d40a
+case                                  d39       d40a    r_d40a
+r_nearly_zero_01                    32.23      32.94     1.018
+length_ratio_integer_00             31.61      30.74     0.968
+length_ratio_integer_02             31.41      31.56     1.016
+burnikel_ziegler_bound_03           25.66      25.75     1.006
+
+SCORE(max) d39      =    32.23 ms   @r_nearly_zero_01
+SCORE(max) d40a     =    32.94 ms   @r_nearly_zero_01
+
+median-of-ratios d40a     vs d39      = 1.0109  (min 0.968 max 1.018)
+
+=== per-case ratio distribution (all 31 paired reps) ===
+case                                                 r_d40a
+r_nearly_zero_01              *[1.001 1.018 1.050]      
+length_ratio_integer_00       *[0.939 0.968 0.995]      
+length_ratio_integer_02        [0.991 1.016 1.032]      
+burnikel_ziegler_bound_03      [0.974 1.006 1.045]      
+(* = IQR 不跨 1.0, 差异显著)
+DONE

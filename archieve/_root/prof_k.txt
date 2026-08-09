@@ -1,0 +1,4 @@
+MULPROF pack          0.000 ms (1)
+MULPROF fft_fwd      19.592 ms (1)
+MULPROF carry         0.941 ms (1)
+MULPROF compute      23.363 ms (1)

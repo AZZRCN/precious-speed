@@ -1,0 +1,27 @@
+=== 三次变两次 (RIRI 打包) 原型实测结果 ===
+日期: 2026-07-31
+环境: g++ 15.2.0, Intel64 Family 6 Model 140, -std=c++20 -O2 -march=native
+
+--- 正确性验证 ---
+  N=     4: err_A=4.55e-13 err_B=1.02e-12  PASS
+  N=    16: err_A=5.14e-12 err_B=7.28e-12  PASS
+  N=    64: err_A=1.93e-11 err_B=1.63e-11  PASS
+  N=   256: err_A=1.18e-10 err_B=1.05e-10  PASS
+  N=  1024: err_A=1.38e-09 err_B=1.36e-09  PASS
+  N=  4096: err_A=8.64e-09 err_B=8.67e-09  PASS
+  All correctness tests PASSED
+
+--- RIRI 打包 vs 分别 FFT 测速 ---
+  (RIRI: 1次复数FFT, 分别: 2次复数FFT, 理论 speedup ~2.0x)
+  N=    16 iters=100000: riri=  17.247ms sep=  31.532ms speedup=1.828x  *RIRI*
+  N=    64 iters= 50000: riri=  29.743ms sep=  52.734ms speedup=1.773x  *RIRI*
+  N=   256 iters= 10000: riri=  24.773ms sep=  45.425ms speedup=1.834x  *RIRI*
+  N=  1024 iters=  5000: riri=  61.368ms sep= 110.253ms speedup=1.797x  *RIRI*
+  N=  4096 iters=  1000: riri=  84.468ms sep= 161.733ms speedup=1.915x  *RIRI*
+  N= 16384 iters=   200: riri=  67.666ms sep= 154.593ms speedup=2.285x  *RIRI*
+
+结论:
+- RIRI 打包比分别 FFT 快 1.77-2.29 倍（接近理论 2.0x）
+- 正确性验证通过（err < 1e-8）
+- mul.cpp 中 fftMul 已用 RIRI 打包（dif<true>）实现三次变两次
+- 最终结论：已在现有代码中实现，无需额外工作

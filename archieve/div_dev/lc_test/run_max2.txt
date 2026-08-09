@@ -1,0 +1,22 @@
+﻿=== Phase 1: Compilation ===
+  correct.exe: rc=0
+  checker.exe: rc=0
+  small.exe: OK
+  medium.exe: OK
+  large.exe: OK
+  max.exe: OK
+  a_max_b_random.exe: OK
+  r_nearly_zero.exe: OK
+  length_ratio_integer.exe: OK
+  burnikel_ziegler_bound.exe: OK
+
+=== Phase 2: Generate + Test ===
+
+[max] 3 seed(s), timeout=300s/case
+  seed=0: |A|=2000001 |B|=2000001 in=4000008B gen=87ms mod=23ms cor=112ms -> PASS
+  seed=1: |A|=2000001 |B|=1 in=2000008B gen=46ms mod=22ms cor=89ms -> PASS
+  seed=2: |A|=2000000 |B|=2000001 in=4000007B gen=151ms mod=20ms cor=141ms -> PASS
+
+=== Summary ===
+Total: 3, Passed: 3, Failed: 0
+Max digits seen: 2000001

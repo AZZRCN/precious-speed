@@ -1,0 +1,16 @@
+{
+ "id": "so-night4-07730606",
+ "name": "so-night4",
+ "cmd": [
+  "python",
+  "superopt/run_night4.py"
+ ],
+ "pid": 8360,
+ "started": 1786107730.612805,
+ "timeout": 32400.0,
+ "cwd": "D:\\precious_speed",
+ "state": "killed",
+ "rc": null,
+ "ended": 1786112804.894593,
+ "out": "D:\\precious_speed\\.jobs\\so-night4-07730606.out"
+}

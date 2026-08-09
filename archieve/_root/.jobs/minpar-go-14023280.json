@@ -1,0 +1,18 @@
+{
+ "id": "minpar-go-14023280",
+ "name": "minpar-go",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "vmbench.py",
+  "cfg_minpar.json",
+  "go"
+ ],
+ "pid": 232,
+ "started": 1786114023.288665,
+ "timeout": 3600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786114036.2974904,
+ "out": "D:\\precious_speed\\.jobs\\minpar-go-14023280.out"
+}

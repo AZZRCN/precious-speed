@@ -1,0 +1,16 @@
+{
+ "id": "--name-98366650",
+ "name": "--name",
+ "cmd": [
+  "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe",
+  "superopt/run_night2.py"
+ ],
+ "pid": 5864,
+ "started": 1786098366.6567526,
+ "timeout": 13500.0,
+ "cwd": "D:\\precious_speed",
+ "state": "killed",
+ "rc": null,
+ "ended": 1786098488.9473202,
+ "out": "D:\\precious_speed\\.jobs\\--name-98366650.out"
+}

@@ -1,11 +1,55 @@
+/*
+=== LC 提交回执 (本文件即该次提交的源码, 已 diff 逐字节确认) ===
+Submission #391180  ==  ***  29 ms  ***  <<< 历史最佳 / 当前纪录持有者
+ID      Date                 Problem                   Lang    User          Status  Time    Memory
+391180  2026/8/7 11:16:23    Division of Big Integers  C++23   (Anonymous)   AC      29 ms   45.52 Mib
+
+  example_00                 AC   1 ms   0.76 Mib
+  small_00                   AC  12 ms  10.27 Mib
+  medium_00                  AC  16 ms   8.54 Mib
+  medium_01                  AC  23 ms   9.29 Mib
+  medium_02                  AC  24 ms   7.26 Mib
+  large_00                   AC  20 ms  12.78 Mib
+  large_01                   AC  22 ms  12.52 Mib
+  max_00                     AC   2 ms   2.76 Mib
+  max_01                     AC   5 ms   6.75 Mib
+  max_02                     AC   3 ms   6.79 Mib
+  a_max_b_random_00          AC  15 ms  22.30 Mib
+  a_max_b_random_01          AC  20 ms  45.52 Mib
+  a_max_b_random_02          AC  29 ms  39.91 Mib   <-- headline 并列最高点
+  r_nearly_zero_00           AC  15 ms   8.04 Mib
+  r_nearly_zero_01           AC  29 ms   4.80 Mib   <-- headline 并列最高点
+  r_nearly_zero_02           AC  28 ms   9.26 Mib
+  length_ratio_integer_00    AC  27 ms  36.54 Mib
+  length_ratio_integer_01    AC  25 ms  35.52 Mib
+  length_ratio_integer_02    AC  28 ms  25.27 Mib
+  length_ratio_integer_03    AC  25 ms  25.13 Mib
+  length_ratio_integer_04    AC  24 ms  20.28 Mib
+  length_ratio_integer_05    AC  25 ms  14.89 Mib
+  burnikel_ziegler_bound_00  AC  25 ms   9.29 Mib
+  burnikel_ziegler_bound_01  AC  24 ms   8.54 Mib
+  burnikel_ziegler_bound_02  AC  29 ms   8.79 Mib   <-- headline 并列最高点
+  burnikel_ziegler_bound_03  AC  23 ms   7.80 Mib
+
+版本 = D45(内联汇编 mulx 魔数常驻 RDX + 大页 hparena) + D46 radix-5 mixed-radix + D47 FFT5_MAX=256 限幅
+破前纪录 #391066 = 30 ms (D45)
+备份原件: best/div_best_tmp_20260807111623.cpp ; 记录: submit_history/391180_D47_29ms_BEST.md
+!! headline 由 a_max_b_random_02 / r_nearly_zero_01 / burnikel_ziegler_bound_02 三点并列撑住,
+   只压 r_nearly_zero_01 单点不会掉分, 必须三点齐降。
+*/
 // AZZRCN
 // https://github.com/AZZRCN
 //
 // Division of Big Integers
+// D34 = D33 + Newton/Mu Limb 临时缓冲去零化 (resize->reserve, 排除 t_inv)
 // LC: https://judge.yosupo.jp/problem/division_of_big_integers
 #define HINT_OP_DIV
+#define ENABLE_FFT5 1 // D46: 放开 5*2^k FFT 档位
+#define NDEBUG  // D33: 干掉源码中 81 个活 assert (LC 编 -O2 不带 NDEBUG)
 
-// LC 评测机: GCP c2-standard-4 (Cascade Lake, AVX2+FMA+BMI2)
+// LC 评测机 (judge.yosupo.jp/help 官方确认): GCP c2d-highcpu-8
+//   AMD EPYC 7B13 = Zen3 "Milan", 限 1 核, 1 GiB 内存
+//   AVX2+BMI2 可用; 无 AVX-512 (Zen3 不支持)
 // #pragma GCC target 可用 (与无效的 #pragma GCC optimize 不同, target 控制指令集)
 // NOTE: fma 已移除 — 实测 fma 导致 FFT 浮点精度变化, 触发罕见除法余数错误 (broad#134)
 #pragma GCC target("avx2,bmi,bmi2,popcnt,lzcnt")
@@ -32,12 +76,388 @@
 #include <algorithm>
 #include <immintrin.h>  // AVX2/SSE2 SIMD (emmintrin.h 子集, 含 AVX2 intrinsics)
 
+
+// ==================== D27: Zen3 大页 Arena 分配器 (LC 特调) ====================
+// LC 判题机 (judge.yosupo.jp/help): GCP c2d-highcpu-8 / AMD EPYC 7B13 (Zen3 Milan)
+//   限 1 核, 1 GiB.  L1d 32KB/8way, L2 512KB/8way, L3 32MB/16way(victim)
+//   L1 DTLB 64 项 -> 4KB 页仅覆盖 256KB;  L2 TLB 2048 项 -> 仅覆盖 8MB
+//   DIV 峰值工作集 33MB => 连 L2 TLB 都装不下, 且 Zen3 硬件预取器不跨 4KB 页边界
+// 对策: 所有堆分配收拢到一块 2MB 对齐 + MADV_HUGEPAGE 的 arena
+//   实测缺页 amb_02 6490 / lri_00 4718 -> 预期 ~20
+//   TLB 覆盖 8MB -> 128MB (L1 DTLB 64 x 2MB), 预取器可在 2MB 内连续工作
+// 结构: bump 分配 + 2^k size-class freelist (vector 反复 grow 时复用, 防 arena 撑爆)
+//   owns() 区分 arena/malloc 来源; 全套 new/delete 变体覆盖, 防止跨分配器混用
+#if defined(__linux__) && !defined(HP_ARENA_OFF)
+#include <sys/mman.h>
+#include <new>
+#include <cstdlib>
+#include <cstdint>
+#ifdef HP_STATS
+#include <cstdio>
+#endif
+
+namespace hparena
+{
+    static constexpr size_t HP = size_t(2) << 20;             // 2MB 大页
+    static constexpr size_t ARENA_SIZE = size_t(512) << 20;   // 虚拟保留 (MAP_NORESERVE, 不占 RSS)
+    static constexpr unsigned KMIN = 6;                       // 最小块 64B
+    static constexpr unsigned KMAX = 30;                      // 最大块 1GB
+
+    static char *g_raw = nullptr;   // mmap 原始返回
+    static char *g_base = nullptr;  // 2MB 对齐起点
+    static char *g_cur = nullptr;
+    static char *g_end = nullptr;
+    static bool g_init = false;
+    static void *g_free[KMAX + 2] = {};
+#ifdef HP_STATS
+    static size_t g_nalloc = 0, g_nhit = 0, g_nfall = 0;
+#endif
+
+    static void init()
+    {
+        g_init = true;
+        void *m = mmap(nullptr, ARENA_SIZE + HP, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (m == MAP_FAILED)
+            return;
+        g_raw = static_cast<char *>(m);
+        uintptr_t a = (reinterpret_cast<uintptr_t>(m) + (HP - 1)) & ~static_cast<uintptr_t>(HP - 1);
+        g_base = g_cur = reinterpret_cast<char *>(a);
+        g_end = g_raw + ARENA_SIZE + HP;
+        // 关键: 请求透明大页. GCP 默认 THP=madvise, 故必须显式 madvise 才生效.
+        madvise(g_base, static_cast<size_t>(g_end - g_base) & ~(HP - 1), MADV_HUGEPAGE);
+    }
+
+    static inline bool owns(void *p) noexcept
+    {
+        return g_base && static_cast<char *>(p) >= g_base && static_cast<char *>(p) < g_end;
+    }
+
+    // 布局: [raw .. ret-8: 空洞][ret-8: uint32 offset][ret-4: uint32 k][ret .. ret+n]
+    static void *take(size_t n, size_t align) noexcept
+    {
+        if (__builtin_expect(!g_init, 0))
+            init();
+        if (__builtin_expect(!g_base, 0))
+            return nullptr;
+        if (align < 64)
+            align = 64;
+        size_t need = n + align + 64;
+        unsigned k = 64u - static_cast<unsigned>(__builtin_clzll(need | 63));
+        if ((size_t(1) << k) < need)
+            ++k;
+        if (k < KMIN)
+            k = KMIN;
+        if (k > KMAX)
+            return nullptr;
+
+        char *raw;
+        if (g_free[k])
+        {
+            raw = static_cast<char *>(g_free[k]);
+            g_free[k] = *reinterpret_cast<void **>(raw);
+#ifdef HP_STATS
+            ++g_nhit;
+#endif
+        }
+        else
+        {
+            size_t blk = size_t(1) << k;
+            char *p = reinterpret_cast<char *>(
+                (reinterpret_cast<uintptr_t>(g_cur) + 63) & ~static_cast<uintptr_t>(63));
+            if (__builtin_expect(p + blk > g_end, 0))
+                return nullptr;
+            g_cur = p + blk;
+            raw = p;
+        }
+#ifdef HP_STATS
+        ++g_nalloc;
+#endif
+        char *ret = reinterpret_cast<char *>(
+            (reinterpret_cast<uintptr_t>(raw) + align + 8 + (align - 1)) & ~static_cast<uintptr_t>(align - 1));
+        reinterpret_cast<uint32_t *>(ret)[-1] = k;
+        reinterpret_cast<uint32_t *>(ret)[-2] = static_cast<uint32_t>(ret - raw);
+        return ret;
+    }
+
+    static inline void give(void *p) noexcept
+    {
+        uint32_t k = reinterpret_cast<uint32_t *>(p)[-1];
+        uint32_t off = reinterpret_cast<uint32_t *>(p)[-2];
+        if (k < KMIN || k > KMAX)
+            return;  // 防御: header 损坏则泄漏而非崩溃
+        void *raw = static_cast<char *>(p) - off;
+        *reinterpret_cast<void **>(raw) = g_free[k];
+        g_free[k] = raw;
+    }
+
+    static inline void *fallback(size_t n) noexcept
+    {
+#ifdef HP_STATS
+        ++g_nfall;
+#endif
+        return std::malloc(n ? n : 1);
+    }
+
+#ifdef HP_STATS
+    struct Stats
+    {
+        ~Stats()
+        {
+            std::fprintf(stderr,
+                         "[hparena] alloc=%zu  freelist_hit=%zu  malloc_fallback=%zu  bump_peak=%.2f MB\n",
+                         g_nalloc, g_nhit, g_nfall,
+                         g_base ? double(g_cur - g_base) / 1048576.0 : 0.0);
+        }
+    };
+    static Stats g_stats;
+#endif
+} // namespace hparena
+
+void *operator new(size_t n)
+{
+    void *p = hparena::take(n, 64);
+    if (__builtin_expect(p != nullptr, 1))
+        return p;
+    p = hparena::fallback(n);
+    if (!p)
+        throw std::bad_alloc();
+    return p;
+}
+void *operator new[](size_t n) { return ::operator new(n); }
+void *operator new(size_t n, const std::nothrow_t &) noexcept
+{
+    void *p = hparena::take(n, 64);
+    return p ? p : hparena::fallback(n);
+}
+void *operator new[](size_t n, const std::nothrow_t &) noexcept
+{
+    return ::operator new(n, std::nothrow);
+}
+void *operator new(size_t n, std::align_val_t a)
+{
+    void *p = hparena::take(n, static_cast<size_t>(a));
+    if (__builtin_expect(p != nullptr, 1))
+        return p;
+    p = std::aligned_alloc(static_cast<size_t>(a),
+                           (n + static_cast<size_t>(a) - 1) & ~(static_cast<size_t>(a) - 1));
+    if (!p)
+        throw std::bad_alloc();
+    return p;
+}
+void *operator new[](size_t n, std::align_val_t a) { return ::operator new(n, a); }
+
+void operator delete(void *p) noexcept
+{
+    if (!p)
+        return;
+    if (__builtin_expect(hparena::owns(p), 1))
+        hparena::give(p);
+    else
+        std::free(p);
+}
+void operator delete[](void *p) noexcept { ::operator delete(p); }
+void operator delete(void *p, size_t) noexcept { ::operator delete(p); }
+void operator delete[](void *p, size_t) noexcept { ::operator delete(p); }
+void operator delete(void *p, std::align_val_t) noexcept { ::operator delete(p); }
+void operator delete[](void *p, std::align_val_t) noexcept { ::operator delete(p); }
+void operator delete(void *p, size_t, std::align_val_t) noexcept { ::operator delete(p); }
+void operator delete[](void *p, size_t, std::align_val_t) noexcept { ::operator delete(p); }
+void operator delete(void *p, const std::nothrow_t &) noexcept { ::operator delete(p); }
+void operator delete[](void *p, const std::nothrow_t &) noexcept { ::operator delete(p); }
+#endif // __linux__ && !HP_ARENA_OFF
+// ================== end D27 arena ==================
+
 #include <chrono>
 #include <cstdio>  // for debug fprintf to stderr (LC RE shows stderr)
+#ifdef FFTHIST
+#include <map>
+#include <cmath>
+#include <cstdlib>
+#endif
+#ifdef CEILHIST
+// 诊断用: 统计 "卷积需求长度 need -> 实际 FFT 档位 used" 的浪费分布。
+// 只在真实执行点打点(决策/代价模型走 _q 静默版), 权重取 N*log2(N)。
+#include <map>
+#include <vector>
+#include <string>
+#include <cmath>
+#include <cstdlib>
+#include <tuple>
+#include <algorithm>
+inline std::map<std::tuple<int, size_t, size_t>, size_t> &ceilHist()
+{
+    static std::map<std::tuple<int, size_t, size_t>, size_t> h;
+    static bool reg = (std::atexit([]
+    {
+        static const char *TAG[3] = {"lin", "mn", "cycm"};
+        double used_w = 0, need_w = 0;
+        std::vector<std::pair<double, std::string>> rows;
+        for (auto &kv : ceilHist())
+        {
+            size_t need = std::get<1>(kv.first), used = std::get<2>(kv.first);
+            if (need < 2) continue;
+            double wu = double(used) * std::log2(double(used)) * double(kv.second);
+            double wn = double(need) * std::log2(double(need)) * double(kv.second);
+            used_w += wu; need_w += wn;
+            char buf[256];
+            snprintf(buf, sizeof buf,
+                     "  %-4s need=%-9zu used=%-9zu x%-6zu waste=%5.1f%%  dNlogN=%.4g",
+                     TAG[std::get<0>(kv.first)], need, used, kv.second,
+                     100.0 * (double(used) / double(need) - 1.0), wu - wn);
+            rows.emplace_back(wu - wn, buf);
+        }
+);
+        fprintf(stderr, "==== fft_ceil need->used (top 20 by wasted N*logN) ====\n");
+        for (size_t i = 0; i < rows.size() && i < 20; i++)
+            fprintf(stderr, "%s\n", rows[i].second.c_str());
+        fprintf(stderr, "  TOTAL used=%.6g ideal=%.6g overhead=%.2f%%\n",
+                used_w, need_w, need_w > 0 ? 100.0 * (used_w / need_w - 1.0) : 0.0);
+        // 机器可读全量导出, 供离线档位模拟
+        if (const char *fn = getenv("CEILHIST_CSV"))
+        {
+            if (FILE *f = fopen(fn, "w"))
+            {
+                fprintf(f, "tag,need,used,cnt\n");
+                for (auto &kv : ceilHist())
+                    fprintf(f, "%d,%zu,%zu,%zu\n", std::get<0>(kv.first),
+                            std::get<1>(kv.first), std::get<2>(kv.first), kv.second);
+                fclose(f);
+            }
+        }
+    }), true);
+    (void)reg;
+    return h;
+}
+#define CEILHIST_TICK(tag, need, used) (ceilHist()[std::make_tuple((tag), (need), (used))]++)
+#else
+#define CEILHIST_TICK(tag, need, used) ((void)0)
+#endif
+#ifdef TOPPROF
+// 顶层四段计时: 解析(十进制->limb) / 除法 / 输出格式化(limb->十进制) / 读写 IO
+#include <chrono>
+struct TopProfT
+{
+    double rd = 0, parse = 0, div = 0, print = 0, wr = 0;
+    ~TopProfT()
+    {
+        double t = rd + parse + div + print + wr;
+        fprintf(stderr,
+                "[topprof] read=%.2f parse=%.2f div=%.2f fmt=%.2f write=%.2f  total=%.2f ms\n"
+                "[topprof]   %%  read=%.1f parse=%.1f div=%.1f fmt=%.1f write=%.1f\n",
+                rd, parse, div, print, wr, t,
+                t > 0 ? 100 * rd / t : 0, t > 0 ? 100 * parse / t : 0,
+                t > 0 ? 100 * div / t : 0, t > 0 ? 100 * print / t : 0,
+                t > 0 ? 100 * wr / t : 0);
+    }
+};
+inline TopProfT &topprof() { static TopProfT t; return t; }
+#define TP_DECL(v) auto _tp_##v = std::chrono::high_resolution_clock::now()
+#define TP_ADD(v) (topprof().v += std::chrono::duration<double, std::milli>(  \
+                       std::chrono::high_resolution_clock::now() - _tp_##v)   \
+                       .count())
+#else
+#define TP_DECL(v) ((void)0)
+#define TP_ADD(v) ((void)0)
+#endif
+#ifdef INVPROF
+// 诊断用: absInvNewtonGMP 逐层自耗时 (self = 本层总耗时 - 子层耗时)。
+// 大用例走 GMP 路径, 原 PROFILE_DIV 完全没插桩 -> 倒数是黑盒。
+// 这里按 (k, cyclic, mn) 聚合, 输出每层 self ms / 次数 / 占比, 定位倒数内部的真实热点。
+#include <map>
+#include <vector>
+#include <tuple>
+#include <cstdlib>
+#include <algorithm>
+struct InvProfKey
+{
+    size_t k, s, rn, mn;
+    int cyc;
+    bool operator<(const InvProfKey &o) const
+    {
+        return std::tie(k, s, rn, mn, cyc) < std::tie(o.k, o.s, o.rn, o.mn, o.cyc);
+    }
+};
+inline std::map<InvProfKey, std::pair<double, size_t>> &invProfRecs()
+{
+    static std::map<InvProfKey, std::pair<double, size_t>> m;
+    static bool reg = (std::atexit([]
+    {
+        auto &mm = invProfRecs();
+        double tot = 0;
+        for (auto &kv : mm) tot += kv.second.first;
+        std::fprintf(stderr, "\n[invprof] total self = %.3f ms over %zu distinct levels\n",
+                     tot, mm.size());
+        std::fprintf(stderr, "[invprof] %10s %10s %10s %10s %5s %12s %8s %7s\n",
+                     "k", "s", "rn", "mn", "cyc", "self_ms", "n", "pct");
+        std::vector<std::pair<double, InvProfKey>> rows;
+        for (auto &kv : mm) rows.push_back({kv.second.first, kv.first});
+);
+        size_t shown = 0;
+        for (auto &r : rows)
+        {
+            if (shown++ >= 24) break;
+            auto &v = mm[r.second];
+            std::fprintf(stderr, "[invprof] %10zu %10zu %10zu %10zu %5d %12.3f %8zu %6.1f%%\n",
+                         r.second.k, r.second.s, r.second.rn, r.second.mn, r.second.cyc,
+                         v.first, v.second, tot > 0 ? v.first / tot * 100 : 0);
+        }
+    }), true);
+    (void)reg;
+    return m;
+}
+inline double &invProfChild()
+{
+    static thread_local double c = 0;
+    return c;
+}
+struct InvProfScope
+{
+    InvProfKey key{};
+    std::chrono::high_resolution_clock::time_point t0;
+    double saved_child;
+    explicit InvProfScope(size_t kk)
+        : t0(std::chrono::high_resolution_clock::now())
+    {
+        key.k = kk;
+        key.cyc = -1;
+        saved_child = invProfChild();
+        invProfChild() = 0.0;
+    }
+    ~InvProfScope()
+    {
+        double tot = std::chrono::duration<double, std::milli>(
+                         std::chrono::high_resolution_clock::now() - t0)
+                         .count();
+        double self = tot - invProfChild();
+        invProfChild() = saved_child + tot;
+        auto &e = invProfRecs()[key];
+        e.first += self;
+        e.second += 1;
+    }
+};
+#define INVPROF_SCOPE(kk) InvProfScope _ips(kk)
+#define INVPROF_SET(ss, rr, mm, cc) \
+    do { _ips.key.s = (ss); _ips.key.rn = (rr); _ips.key.mn = (mm); _ips.key.cyc = (cc); } while (0)
+// 细粒度相位: 只对大 k 打印, 定位 cyclic 路径内部哪一步爆炸
+#define INVPH_DECL(v) auto _iph_##v = std::chrono::high_resolution_clock::now()
+#define INVPH_END(v, kk, tag)                                                       \
+    do {                                                                            \
+        if ((kk) >= 40000)                                                          \
+            std::fprintf(stderr, "[invph] k=%zu %-10s %8.3f ms\n", (size_t)(kk), tag, \
+                         std::chrono::duration<double, std::milli>(                 \
+                             std::chrono::high_resolution_clock::now() - _iph_##v)  \
+                             .count());                                             \
+    } while (0)
+#else
+#define INVPROF_SCOPE(kk) ((void)0)
+#define INVPROF_SET(ss, rr, mm, cc) ((void)0)
+#define INVPH_DECL(v) ((void)0)
+#define INVPH_END(v, kk, tag) ((void)0)
+#endif
 #ifdef PROFILE_DIV
 static FILE *_prof_fp = nullptr;
 static inline void _prof_init() { if (!_prof_fp) _prof_fp = std::fopen("prof_detail.log", "w"); }
-static inline void _prof_flush() { if (_prof_fp) { std::fflush(_prof_fp); } }
 #define PROF_PRINT(...) do { _prof_init(); if (_prof_fp) std::fprintf(_prof_fp, __VA_ARGS__); } while(0)
 #else
 #define PROF_PRINT(...) ((void)0)
@@ -72,6 +492,35 @@ namespace hint
 #define HINT_PROB_LIKELY(x, p)   __builtin_expect_with_probability(!!(x), 1, (p))
 #define HINT_PROB_UNLIKELY(x, p) __builtin_expect_with_probability(!!(x), 0, (p))
 #endif
+// ---- D17: FFTW-style codelets ------------------------------------------
+// split-radix recursion T(n)=1+T(n/2)+2T(n/4) with base float_len<=8 produces
+// ~n/6 recursive nodes; a single 32768-point transform costs ~5461 calls, each
+// paying ~135 Ir of call/prologue overhead for only 6 butterflies of real work.
+// Compile-time unrolling of every subtree with LEN<=FFT_FIXED_MAX collapses the
+// call count by ~FFT_FIXED_MAX/8 and turns the leaves into straight-line SIMD.
+#ifndef FFT_FIXED_MAX
+#define FFT_FIXED_MAX 32
+#endif
+// Forcing the codelet tree inline is a win, but forcing the 4/8-point leaves or
+// the runtime->compile-time dispatcher inline costs more in register pressure
+// than it saves in calls (measured on Zen3 cache model), so they stay heuristic.
+#define HINT_AI __attribute__((always_inline)) inline
+#ifndef FFT_AI_SMALL
+#define FFT_AI_SMALL 0
+#endif
+#ifndef FFT_AI_DISPATCH
+#define FFT_AI_DISPATCH 0
+#endif
+#if FFT_AI_SMALL
+#define HINT_AI_SMALL HINT_AI
+#else
+#define HINT_AI_SMALL
+#endif
+#if FFT_AI_DISPATCH
+#define HINT_AI_DISPATCH HINT_AI
+#else
+#define HINT_AI_DISPATCH
+#endif
 #ifndef HINT_LIKELY
 #define HINT_LIKELY(x)   __builtin_expect(!!(x), 1)
 #define HINT_UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -94,11 +543,36 @@ namespace hint
         T *allocate(size_t n)
         {
             void *p = nullptr;
+#ifdef _WIN32
+            p = _aligned_malloc(n * sizeof(T), 32);
+            if (!p) throw std::bad_alloc();
+#else
+#if defined(__linux__) && !defined(HP_ARENA_OFF)
+            // D27: 走大页 arena (2MB 页 + freelist 复用, 消除 mmap/munmap syscall)
+            p = ::hparena::take(n * sizeof(T), 32);
+            if (p)
+                return static_cast<T *>(p);
+#endif
             if (posix_memalign(&p, 32, n * sizeof(T)) != 0)
                 throw std::bad_alloc();
+#endif
             return static_cast<T *>(p);
         }
-        void deallocate(T *p, size_t) { free(p); }
+        void deallocate(T *p, size_t)
+        {
+#ifdef _WIN32
+            _aligned_free(p);
+#else
+#if defined(__linux__) && !defined(HP_ARENA_OFF)
+            if (::hparena::owns(p))
+            {
+                ::hparena::give(p);
+                return;
+            }
+#endif
+            free(p);
+#endif
+        }
         template <typename U>
         struct rebind { using other = AlignedAlloc32<U>; };
         bool operator==(const AlignedAlloc32 &) const { return true; }
@@ -107,16 +581,6 @@ namespace hint
     template <typename T>
     using AlignedVec32 = std::vector<T, AlignedAlloc32<T>>;
 
-    template <typename T>
-    constexpr T int_floor2(T n)
-    {
-        constexpr int bits = sizeof(n) * 8;
-        for (int i = 1; i < bits; i *= 2)
-        {
-            n |= (n >> i);
-        }
-        return (n >> 1) + 1;
-    }
 
     template <typename T>
     constexpr T int_ceil2(T n)
@@ -136,7 +600,152 @@ namespace hint
         return n != 0 && (n & (n - 1)) == 0;
     }
 
-    
+    // ---- 非 2 幂 FFT 档位 (radix-3 顶层) -------------------------------------
+    // FFT 长度只允许 2^k 时, "刚过一个 2 幂" 的卷积白付近 1.5 倍代价(最坏浪费 100%).
+    // 增加 3*2^k 档位后台阶细化为 {.., 2^k, 1.5*2^k, 2^{k+1}, ..}, 最坏浪费降到 50%.
+    // FFT3_MIN: radix-3 路径要求每块 M = float_len/6 >= 32, 即 float_len >= 192.
+    constexpr size_t FFT3_MIN = 192;
+    // FFT5_MIN: radix-5 路径要求每块 M = float_len/10 >= 8 (blk=2M>=16, 实数解包最小单元)
+    constexpr size_t FFT5_MIN = 80;
+    constexpr size_t FFT5_MAX = 256;  // D47: 尺寸上限, 只保留能赢的小档(80/160); 大尺寸5路分解常数因子回退
+    // 返回 >= n 的最小可用 FFT 长度 (2^k 或 3*2^k)
+    constexpr size_t fft_ceil(size_t n)
+    {
+        size_t p = int_ceil2(n);
+#ifdef NO_FFT3
+        return p; // A/B 开关: 退回纯 2 幂档位
+#else
+        size_t best = p;
+        size_t h = p / 4 * 3; // = 3*2^(k-2), 落在 (p/2, p)
+        if (h >= FFT3_MIN && h >= n)
+            best = h;
+#ifdef ENABLE_FFT5
+        // D46: 5*2^(k-3) 落在 (p/2, 3p/4), 比 3*2^k 更细一档
+        size_t h5 = p / 8 * 5;
+        if (h5 >= FFT5_MIN && h5 >= n && h5 < best && h5 <= FFT5_MAX)
+            best = h5;
+#endif
+        return best;
+#endif
+    }
+    // float_len 是否走 radix-3 路径 (合法长度只有 2^k 与 3*2^k 两类)
+    constexpr bool is_fft3(size_t float_len)
+    {
+        return (float_len % 3) == 0;
+    }
+    constexpr bool is_fft5(size_t float_len)
+    {
+#ifdef ENABLE_FFT5
+        // 与 is_fft3 互斥 (15*2^k 不由 fft_ceil 产生, 这里只是防御)
+        return (float_len % 5) == 0 && (float_len % 3) != 0 && float_len >= FFT5_MIN && float_len <= FFT5_MAX;
+#else
+        (void)float_len;
+        return false;
+#endif
+    }
+
+    // ---- bisect 开关: 按"语义类别"独立回退到纯 2 幂档位 -----------------------
+    // 三类长度的风险面完全不同, 必须能分别关掉才能定位回归:
+    //   lin  : 纯线性卷积长度 —— 只要 >= conv_len 即正确, 风险最低
+    //   mn   : absInvNewtonGMP 的 cyclic 模数 B^mn-1 —— 改变 GMP 修正的整数约束
+    //   cycm : absDivMu 的 cyclic 模数 —— 改变 unwrap 近似的 wrap 次数与精度
+    constexpr size_t fft_ceil_lin_q(size_t n)
+    {
+#ifdef BISECT_LIN_2POW
+        return int_ceil2(n);
+#else
+        return fft_ceil(n);
+#endif
+    }
+    constexpr size_t fft_ceil_mn_q(size_t n)
+    {
+#ifdef BISECT_MN_2POW
+        return int_ceil2(n);
+#else
+        return fft_ceil(n);
+#endif
+    }
+    constexpr size_t fft_ceil_cycm_q(size_t n)
+    {
+#ifdef BISECT_CYCM_2POW
+        return int_ceil2(n);
+#else
+        return fft_ceil(n);
+#endif
+    }
+    // 真实执行点用的版本 (CEILHIST 下会打点; 正式构建与 _q 完全等价, 零开销)
+#ifdef CEILHIST
+    inline size_t fft_ceil_lin(size_t n)
+    { size_t r = fft_ceil_lin_q(n); CEILHIST_TICK(0, n, r); return r; }
+    inline size_t fft_ceil_mn(size_t n)
+    { size_t r = fft_ceil_mn_q(n); CEILHIST_TICK(1, n, r); return r; }
+    inline size_t fft_ceil_cycm(size_t n)
+    { size_t r = fft_ceil_cycm_q(n); CEILHIST_TICK(2, n, r); return r; }
+#else
+    constexpr size_t fft_ceil_lin(size_t n) { return fft_ceil_lin_q(n); }
+    constexpr size_t fft_ceil_mn(size_t n) { return fft_ceil_mn_q(n); }
+    constexpr size_t fft_ceil_cycm(size_t n) { return fft_ceil_cycm_q(n); }
+#endif
+
+    // ---- mu_div_qr 块划分代价模型 -------------------------------------------
+    // D13 引入 (只用于 qn_mu>len2 分支), D15 修正闸门口径, D16 抽出并推广到全分支。
+    //
+    // cost(inc) = A*W(Fi) + W(Fi) + W(Fc) + nblk*(2W(Fi) + 2W(Fc)),  W(N)=N*log2 N
+    //   A≈6.8  : Newton 倒数相对"顶层一次变换"的倍数 (INVPROF 逐层实测 6.8~7.0)
+    //   Fi     : fft_ceil(2*inc+1) —— 同时驱动 (a) 整个倒数 (b) 每块第一次乘法
+    //   Fc     : cyclic 模数 (开得了 cyclic 时约 Fl/2), 否则退回线性 Fl
+    //   关键杠杆: inc 稍大就把 Fi 顶上一档, 而 Fi 有双重作用 => 多切一块常常更划算。
+    //
+    // ★ 闸门口径必须与 absDivMu 执行处 (use_cyclic) 逐字一致, 否则模型会把
+    //   "实际能吃循环卷积"的 inc 误判成线性、成本虚高, 从而死守次优块数。
+    inline double muBlockCost(size_t qn_mu, size_t len2, size_t inc)
+    {
+        if (inc > len2 || inc < 64) return 1e300;
+        // 档位长度恒为 2^k 或 3*2^k, 直接算 log2 避免引入 <cmath>
+        auto Wf = [](size_t n) -> double {
+            if (n < 2) return 0.0;
+            size_t p = n, e = 0;
+            while (p > 1 && (p & 1) == 0) { p >>= 1; e++; }
+            return (double)n * ((double)e + (p == 3 ? 1.5849625007211562 : 0.0));
+        };
+        const size_t nblk = (qn_mu + inc - 1) / inc;
+        const size_t Fi = fft_ceil_lin_q(2 * inc + 1);
+        const size_t Fl = fft_ceil_lin_q(len2 + inc);
+        const size_t Fc_cand = std::max(fft_ceil_cycm_q(len2 + 1),
+                                        fft_ceil_cycm_q((len2 + inc) / 2 + 1));
+#ifdef GATE_POW2
+        const size_t gate = std::max(int_ceil2(len2 + 1),
+                                     int_ceil2((len2 + inc) / 2 + 1));
+#else
+        const size_t gate = Fc_cand;
+#endif
+        const bool cyc = (gate < inc + len2);  // 调用点已保证 inc>=64 => allow_cyclic
+        const size_t Fc = cyc ? Fc_cand : Fl;
+        const double wi = Wf(Fi), wc = Wf(Fc);
+        return 6.8 * wi + wi + wc + (double)nblk * (2 * wi + 2 * wc);
+    }
+
+#ifdef DIV_INVDUMP
+// 对拍探针: dump absInvNewtonGMP 每层的输出 inv, 用于 cyclic 开/关两次运行 diff.
+#define DIV_INVDUMP_EMIT(tag, kk, invsp)                                                    \
+    do {                                                                                    \
+        size_t k_ = (size_t)(kk);                                                           \
+        if (k_ >= 4096) {                                                                   \
+            unsigned long long h_ = 1469598103934665603ULL;                                 \
+            for (size_t j_ = 0; j_ <= k_; j_++) {                                           \
+                h_ ^= (unsigned long long)(invsp).ptr[j_];                                  \
+                h_ *= 1099511628211ULL;                                                     \
+            }                                                                               \
+            fprintf(stderr,                                                                 \
+                    "[invdump] %s k=%zu hash=%016llx int=%u hi=%u,%u,%u lo=%u,%u,%u\n",     \
+                    tag, k_, h_, (unsigned)(invsp).ptr[k_],                                 \
+                    (unsigned)(invsp).ptr[k_ - 1], (unsigned)(invsp).ptr[k_ - 2],           \
+                    (unsigned)(invsp).ptr[k_ - 3], (unsigned)(invsp).ptr[2],                \
+                    (unsigned)(invsp).ptr[1], (unsigned)(invsp).ptr[0]);                    \
+        }                                                                                   \
+    } while (0)
+#endif
+
     template <typename T>
     constexpr int hint_log2(T n)
     {
@@ -213,34 +822,7 @@ namespace hint
         return result;
     }
 
-    constexpr int hint_popcnt(uint32_t n)
-    {
-        constexpr uint32_t mask55 = 0x55555555;
-        constexpr uint32_t mask33 = 0x33333333;
-        constexpr uint32_t mask0f = 0x0f0f0f0f;
-        constexpr uint32_t maskff = 0x00ff00ff;
-        n = (n & mask55) + ((n >> 1) & mask55);
-        n = (n & mask33) + ((n >> 2) & mask33);
-        n = (n & mask0f) + ((n >> 4) & mask0f);
-        n = (n & maskff) + ((n >> 8) & maskff);
-        return uint16_t(n) + (n >> 16);
-    }
-    constexpr int hint_popcnt(uint64_t n)
-    {
-        constexpr uint64_t mask5555 = 0x5555555555555555;
-        constexpr uint64_t mask3333 = 0x3333333333333333;
-        constexpr uint64_t mask0f0f = 0x0f0f0f0f0f0f0f0f;
-        constexpr uint64_t mask00ff = 0x00ff00ff00ff00ff;
-        constexpr uint64_t maskffff = 0x0000ffff0000ffff;
-        n = (n & mask5555) + ((n >> 1) & mask5555);
-        n = (n & mask3333) + ((n >> 2) & mask3333);
-        n = (n & mask0f0f) + ((n >> 4) & mask0f0f);
-        n = (n & mask00ff) + ((n >> 8) & mask00ff);
-        n = (n & maskffff) + ((n >> 16) & maskffff);
-        return uint32_t(n) + (n >> 32);
-    }
-
-    constexpr uint32_t bitrev32(uint32_t n)
+constexpr uint32_t bitrev32(uint32_t n)
     {
         constexpr uint32_t mask55 = 0x55555555;
         constexpr uint32_t mask33 = 0x33333333;
@@ -258,11 +840,6 @@ namespace hint
         return bitrev32(n) >> (32 - len);
     }
 
-    template <typename T>
-    void fill_zero(T begin, T end)
-    {
-        std::memset(&begin[0], 0, (end - begin) * sizeof(T));
-    }
 
     template <typename Float>
     struct Float2
@@ -467,7 +1044,132 @@ namespace hint
                 transform2(i1, r3);
                 std::swap(i3, r3);
             }
-            template <typename Float, int DIV>
+            // ================= D21: 4-complex SoA (C4) butterfly layout =================
+            // C2 布局 {r0,r1,i0,i1} 里 real/imag 各占半个 ymm, 于是
+            //   (a) 复数乘的 real*o.real 只有 128-bit 有效宽度
+            //   (b) difSplit 尾部 transform2(r2,i3) / swap(i3,r3) 跨 real/imag 分区
+            // 两者都逼 GCC 发 vpermpd/vblendpd。C4 把 4 个复数的 re/im 各放一整个 ymm,
+            // 上述两处全部变成同 lane 全宽运算, shuffle 归零。
+#ifndef FFT_C4_MIN
+#define FFT_C4_MIN 32
+#endif
+            struct C4d
+            {
+                __m256d re, im;
+            };
+            HINT_AI C4d c4load(const double *p)
+            {
+                return C4d{_mm256_load_pd(p), _mm256_load_pd(p + 4)};
+            }
+            HINT_AI void c4store(double *p, const C4d &c)
+            {
+                _mm256_store_pd(p, c.re);
+                _mm256_store_pd(p + 4, c.im);
+            }
+            // 用 __m256d 运算符而非 fma intrinsic: 顶层 pragma target 未开 fma,
+            // 交给 GCC 自行融合 (实测仍产出 vfmadd/vfnmadd)。
+            HINT_AI C4d c4mul(const C4d &a, const C4d &b)
+            {
+                return C4d{a.re * b.re - a.im * b.im, a.im * b.re + a.re * b.im};
+            }
+            HINT_AI C4d c4mulConj(const C4d &a, const C4d &b)
+            {
+                return C4d{a.re * b.re + a.im * b.im, a.im * b.re - a.re * b.im};
+            }
+            // difSplit 的 C4 版。原语义 (A=c0-c2, B=c1-c3):
+            //   c0 += c2 ; c1 += c3
+            //   c2 = (A.re + B.im, A.im - B.re) ; c3 = (A.re - B.im, A.im + B.re)
+            HINT_AI void difSplitC4(C4d &c0, C4d &c1, C4d &c2, C4d &c3)
+            {
+                const __m256d ar = c0.re - c2.re, ai = c0.im - c2.im;
+                const __m256d br = c1.re - c3.re, bi = c1.im - c3.im;
+                c0.re = c0.re + c2.re;
+                c0.im = c0.im + c2.im;
+                c1.re = c1.re + c3.re;
+                c1.im = c1.im + c3.im;
+                c2.re = ar + bi;
+                c2.im = ai - br;
+                c3.re = ar - bi;
+                c3.im = ai + br;
+            }
+            // iditSplit 的 C4 版。原语义 (S=c2+c3, D=c2-c3):
+            //   c0' = c0 + S ; c2' = c0 - S
+            //   c1' = (c1.re - D.im, c1.im + D.re) ; c3' = (c1.re + D.im, c1.im - D.re)
+            HINT_AI void iditSplitC4(C4d &c0, C4d &c1, C4d &c2, C4d &c3)
+            {
+                const __m256d sr = c2.re + c3.re, si = c2.im + c3.im;
+                const __m256d dr = c2.re - c3.re, di = c2.im - c3.im;
+                c2.re = c0.re - sr;
+                c2.im = c0.im - si;
+                c0.re = c0.re + sr;
+                c0.im = c0.im + si;
+                c3.re = c1.re + di;
+                c3.im = c1.im - dr;
+                c1.re = c1.re - di;
+                c1.im = c1.im + dr;
+            }
+            // ---- 边界格式的融合 load/store (D22) ----
+            // C2/RRII 内存 -> C4 寄存器: 2 条 perm2f128, 复用主循环本来就有的 load
+            HINT_AI C4d c4loadC2(const double *p)
+            {
+                const __m256d a = _mm256_load_pd(p), b = _mm256_load_pd(p + 4);
+                return C4d{_mm256_permute2f128_pd(a, b, 0x20), _mm256_permute2f128_pd(a, b, 0x31)};
+            }
+            HINT_AI void c4storeC2(double *p, const C4d &c)
+            {
+                _mm256_store_pd(p, _mm256_permute2f128_pd(c.re, c.im, 0x20));
+                _mm256_store_pd(p + 4, _mm256_permute2f128_pd(c.re, c.im, 0x31));
+            }
+            // RIRI 内存 <-> C4 寄存器: 4 条 shuffle
+            HINT_AI C4d c4loadRIRI(const double *p)
+            {
+                const __m256d a = _mm256_load_pd(p), b = _mm256_load_pd(p + 4);
+                return C4d{_mm256_permute4x64_pd(_mm256_unpacklo_pd(a, b), 0xD8),
+                           _mm256_permute4x64_pd(_mm256_unpackhi_pd(a, b), 0xD8)};
+            }
+            HINT_AI void c4storeRIRI(double *p, const C4d &c)
+            {
+                const __m256d lo = _mm256_unpacklo_pd(c.re, c.im);
+                const __m256d hi = _mm256_unpackhi_pd(c.re, c.im);
+                _mm256_store_pd(p, _mm256_permute2f128_pd(lo, hi, 0x20));
+                _mm256_store_pd(p + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+            }
+            // MODE: 0 = C4, 1 = C2/RRII, 2 = RIRI
+            template <int MODE>
+            HINT_AI C4d c4loadM(const double *p)
+            {
+                if constexpr (MODE == 0)
+                    return c4load(p);
+                else if constexpr (MODE == 1)
+                    return c4loadC2(p);
+                else
+                    return c4loadRIRI(p);
+            }
+            template <int MODE>
+            HINT_AI void c4storeM(double *p, const C4d &c)
+            {
+                if constexpr (MODE == 0)
+                    c4store(p, c);
+                else if constexpr (MODE == 1)
+                    c4storeC2(p, c);
+                else
+                    c4storeRIRI(p, c);
+            }
+            // RRII|RRII <-> RRRR|IIII 。perm2f128(A,B,0x20)/(A,B,0x31) 这一对是**对合**,
+            // 所以 pack 和 unpack 是同一个函数。n 必须是 8 的倍数。
+            inline void packC4(double *p, size_t n)
+            {
+                for (size_t i = 0; i + 8 <= n; i += 8)
+                {
+                    const __m256d a = _mm256_load_pd(p + i);
+                    const __m256d b = _mm256_load_pd(p + i + 4);
+                    _mm256_store_pd(p + i, _mm256_permute2f128_pd(a, b, 0x20));
+                    _mm256_store_pd(p + i + 4, _mm256_permute2f128_pd(a, b, 0x31));
+                }
+            }
+            // RIRI -> RRRR|IIII (只在 dif<true> 最外层用一次)
+// RRRR|IIII -> RIRI (只在 idit<true> 最外层用一次)
+template <typename Float, int DIV>
             struct FFTTable
             {
                 using C2 = Complex2<Float>;
@@ -479,9 +1181,18 @@ namespace hint
                     table[4] = 1, table[6] = 0;
                     table[5] = std::cos(theta), table[7] = std::sin(theta);
                 }
-                void expandLog(int log_len)
+
+                // D21: >= C4_OFF 的段按 C4 布局存放 (packC4 自逆, 故递推前先还原)。
+                static constexpr size_t C4_OFF = size_t(FFT_C4_MIN) * 2 / DIV;
+                void packSegs()
                 {
-                    expand(size_t(1) << log_len);
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        if (table.size() > C4_OFF)
+                        {
+                            packC4(&table[C4_OFF], table.size() - C4_OFF);
+                        }
+                    }
                 }
                 void expand(size_t fft_len)
                 {
@@ -490,6 +1201,7 @@ namespace hint
                     {
                         return;
                     }
+                    packSegs();
                     size_t new_len = fft_len * 4 / DIV;
                     table.resize(new_len);
                     for (size_t rank = cur_len * 2; rank <= fft_len; rank *= 2)
@@ -509,6 +1221,7 @@ namespace hint
                             omega1.store(it + 4);
                         }
                     }
+                    packSegs();
                 }
                 constexpr const Float *getBegin(size_t rank) const
                 {
@@ -540,12 +1253,23 @@ namespace hint
                 void dif(Float inout[], size_t float_len)
                 {
                     HINT_ASSUME(is_2pow(float_len));
-                    if (float_len <= 8)
+                    if constexpr (std::is_same_v<Float, double>)
                     {
-                        difSmall<RIRI_IN>(inout, float_len);
+                        if (float_len > FFT_C4_MIN)
+                        {
+                            // D22: 边界格式转换融合进主循环的 load, 不再单独走一趟内存
+                            difC4<RIRI_IN ? 2 : 1>(inout, float_len);
+                            return;
+                        }
+                    }
+                    if (float_len <= FFT_FIXED_MAX)
+                    {
+                        difDispatch<RIRI_IN>(inout, float_len);
                         return;
                     }
-                    expand(float_len);
+                    // D17: expand() removed from the recursion. Every external entry
+                    // (rdif/ridit/rdot) expands for the *largest* length first and the
+                    // tables grow monotonically, so children are always covered.
                     const size_t fft_len = float_len / 2, c2_len = fft_len / 2;
                     const size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
                     // FFT buffers + twiddle tables: AlignedVec32 (posix_memalign 32), hint for AVX2
@@ -577,12 +1301,21 @@ namespace hint
                 void idit(Float inout[], size_t float_len)
                 {
                     HINT_ASSUME(is_2pow(float_len));
-                    if (float_len <= 8)
+                    if constexpr (std::is_same_v<Float, double>)
                     {
-                        iditSmall<RIRI_OUT>(inout, float_len);
+                        if (float_len > FFT_C4_MIN)
+                        {
+                            // D22: idit 主循环在递归之后, 最外层那趟正好是最后一步 -> store 时转换
+                            iditC4<RIRI_OUT ? 2 : 1>(inout, float_len);
+                            return;
+                        }
+                    }
+                    if (float_len <= FFT_FIXED_MAX)
+                    {
+                        iditDispatch<RIRI_OUT>(inout, float_len);
                         return;
                     }
-                    expand(float_len);
+                    // D17: expand() removed from the recursion (see dif()).
                     size_t stride = float_len / 4;
                     idit<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout, 32)), stride * 2);
                     idit<false>(reinterpret_cast<Float *>(__builtin_assume_aligned(inout + stride * 2, 32)), stride);
@@ -608,8 +1341,86 @@ namespace hint
                     }
                 }
 
+                // ---- D21: C4 布局的 split-radix 主体 ----
+                // 索引与 C2 版完全一致: s1 = float_len/4 恰好等于 C2 版的 stride,
+                // twiddle 段长 fft_len/2 也精确匹配 (每迭代吃 4 个 twiddle = 8 double)。
+                template <int IN_MODE>
+                void difC4(Float inout[], size_t float_len)
+                {
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        if (float_len <= FFT_C4_MIN)
+                        {
+                            // 只有递归内部 (IN_MODE==0) 会落到叶子: 最外层进来时 float_len > FFT_C4_MIN
+                            packC4(inout, float_len); // C4 -> RRII, 回到原路径
+                            dif<false>(inout, float_len);
+                            return;
+                        }
+                        const size_t fft_len = float_len / 2;
+                        const size_t s1 = float_len / 4, s2 = s1 * 2, s3 = s1 * 3;
+                        auto tp1 = reinterpret_cast<const double *>(
+                            __builtin_assume_aligned(table1.getBegin(fft_len), 32));
+                        auto tp3 = reinterpret_cast<const double *>(
+                            __builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                        auto it = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+                        for (size_t k = fft_len / 16; k > 0; k--, it += 8, tp1 += 8, tp3 += 8)
+                        {
+                            HINT_PREFETCH(tp1 + 16, 0, 1);
+                            HINT_PREFETCH(tp3 + 16, 0, 1);
+                            C4d c0 = c4loadM<IN_MODE>(it), c1 = c4loadM<IN_MODE>(it + s1);
+                            C4d c2 = c4loadM<IN_MODE>(it + s2), c3 = c4loadM<IN_MODE>(it + s3);
+                            difSplitC4(c0, c1, c2, c3);
+                            c4store(it, c0);
+                            c4store(it + s1, c1);
+                            c4store(it + s2, c4mul(c2, c4load(tp1)));
+                            c4store(it + s3, c4mul(c3, c4load(tp3)));
+                        }
+                        const size_t stride = float_len / 4;
+                        difC4<0>(inout, stride * 2);
+                        difC4<0>(inout + stride * 2, stride);
+                        difC4<0>(inout + stride * 3, stride);
+                    }
+                }
+                template <int OUT_MODE>
+                void iditC4(Float inout[], size_t float_len)
+                {
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        if (float_len <= FFT_C4_MIN)
+                        {
+                            idit<false>(inout, float_len);
+                            packC4(inout, float_len); // RRII -> C4, 交回上层
+                            return;
+                        }
+                        const size_t stride = float_len / 4;
+                        iditC4<0>(inout, stride * 2);
+                        iditC4<0>(inout + stride * 2, stride);
+                        iditC4<0>(inout + stride * 3, stride);
+                        const size_t fft_len = float_len / 2;
+                        const size_t s1 = float_len / 4, s2 = s1 * 2, s3 = s1 * 3;
+                        auto tp1 = reinterpret_cast<const double *>(
+                            __builtin_assume_aligned(table1.getBegin(fft_len), 32));
+                        auto tp3 = reinterpret_cast<const double *>(
+                            __builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                        auto it = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+                        for (size_t k = fft_len / 16; k > 0; k--, it += 8, tp1 += 8, tp3 += 8)
+                        {
+                            HINT_PREFETCH(tp1 + 16, 0, 1);
+                            HINT_PREFETCH(tp3 + 16, 0, 1);
+                            C4d c0 = c4load(it), c1 = c4load(it + s1);
+                            C4d c2 = c4mulConj(c4load(it + s2), c4load(tp1));
+                            C4d c3 = c4mulConj(c4load(it + s3), c4load(tp3));
+                            iditSplitC4(c0, c1, c2, c3);
+                            c4storeM<OUT_MODE>(it, c0);
+                            c4storeM<OUT_MODE>(it + s1, c1);
+                            c4storeM<OUT_MODE>(it + s2, c2);
+                            c4storeM<OUT_MODE>(it + s3, c3);
+                        }
+                    }
+                }
+
                 template <bool RIRI_IN>
-                void difSmall(Float inout[], size_t float_len)
+                HINT_AI_SMALL void difSmall(Float inout[], size_t float_len)
                 {
                     if (float_len <= 2)
                     {
@@ -643,7 +1454,7 @@ namespace hint
                     }
                 }
                 template <bool RIRI_OUT>
-                void iditSmall(Float inout[], size_t float_len)
+                HINT_AI_SMALL void iditSmall(Float inout[], size_t float_len)
                 {
                     if (float_len <= 2)
                     {
@@ -673,6 +1484,118 @@ namespace hint
                             std::swap(inout[1], inout[2]);
                             std::swap(inout[5], inout[6]);
                         }
+                    }
+                }
+
+                // ---- D17: compile-time unrolled split-radix codelets ----------------
+                // difFixed<LEN>/iditFixed<LEN> mirror dif/idit exactly, but LEN is a
+                // compile-time constant, so an entire subtree collapses into
+                // straight-line code: zero calls, zero loop bookkeeping, constant
+                // twiddle offsets, and fixed trip counts the vectorizer fully unrolls.
+                template <size_t LEN, bool RIRI_IN>
+                HINT_AI void difFixed(Float inout[])
+                {
+                    static_assert(LEN >= 2 && (LEN & (LEN - 1)) == 0, "LEN must be a power of two");
+                    if constexpr (LEN <= 8)
+                    {
+                        difSmall<RIRI_IN>(inout, LEN);
+                    }
+                    else
+                    {
+                        constexpr size_t fft_len = LEN / 2, c2_len = fft_len / 2;
+                        constexpr size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
+                        auto tp1 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table1.getBegin(fft_len), 32));
+                        auto tp3 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                        auto it = reinterpret_cast<C2 *>(__builtin_assume_aligned(inout, 32));
+                        for (size_t k = 0; k < stride1; k++)
+                        {
+                            C2 c0 = it[k], c1 = it[k + stride1], c2 = it[k + stride2], c3 = it[k + stride3];
+                            if (RIRI_IN)
+                            {
+                                c0.permute(), c1.permute(), c2.permute(), c3.permute();
+                            }
+                            difSplit(c0.real, c0.imag, c1.real, c1.imag, c2.real, c2.imag, c3.real, c3.imag);
+                            it[k] = c0, it[k + stride1] = c1;
+                            it[k + stride2] = c2.mul(tp1[k]), it[k + stride3] = c3.mul(tp3[k]);
+                        }
+                        constexpr size_t stride = LEN / 4;
+                        difFixed<stride * 2, false>(inout);
+                        difFixed<stride, false>(inout + stride * 2);
+                        difFixed<stride, false>(inout + stride * 3);
+                    }
+                }
+                template <size_t LEN, bool RIRI_OUT>
+                HINT_AI void iditFixed(Float inout[])
+                {
+                    static_assert(LEN >= 2 && (LEN & (LEN - 1)) == 0, "LEN must be a power of two");
+                    if constexpr (LEN <= 8)
+                    {
+                        iditSmall<RIRI_OUT>(inout, LEN);
+                    }
+                    else
+                    {
+                        constexpr size_t stride = LEN / 4;
+                        iditFixed<stride * 2, false>(inout);
+                        iditFixed<stride, false>(inout + stride * 2);
+                        iditFixed<stride, false>(inout + stride * 3);
+                        constexpr size_t fft_len = LEN / 2, c2_len = fft_len / 2;
+                        constexpr size_t stride1 = c2_len / 4, stride2 = stride1 * 2, stride3 = stride1 * 3;
+                        auto tp1 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table1.getBegin(fft_len), 32));
+                        auto tp3 = reinterpret_cast<const C2 *>(__builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                        auto it = reinterpret_cast<C2 *>(__builtin_assume_aligned(inout, 32));
+                        for (size_t k = 0; k < stride1; k++)
+                        {
+                            C2 c0 = it[k], c1 = it[k + stride1];
+                            C2 c2 = it[k + stride2].mulConj(tp1[k]), c3 = it[k + stride3].mulConj(tp3[k]);
+                            iditSplit(c0.real, c0.imag, c1.real, c1.imag, c2.real, c2.imag, c3.real, c3.imag);
+                            if (RIRI_OUT)
+                            {
+                                c0.permute(), c1.permute(), c2.permute(), c3.permute();
+                            }
+                            it[k] = c0, it[k + stride1] = c1, it[k + stride2] = c2, it[k + stride3] = c3;
+                        }
+                    }
+                }
+                // Runtime length -> compile-time codelet. Called once per subtree whose
+                // size has fallen to FFT_FIXED_MAX, replacing ~FFT_FIXED_MAX/8 calls.
+                template <bool RIRI_IN>
+                HINT_AI_DISPATCH void difDispatch(Float inout[], size_t float_len)
+                {
+                    switch (float_len)
+                    {
+#if FFT_FIXED_MAX >= 128
+                    case 128: difFixed<128, RIRI_IN>(inout); return;
+#endif
+#if FFT_FIXED_MAX >= 64
+                    case 64: difFixed<64, RIRI_IN>(inout); return;
+#endif
+#if FFT_FIXED_MAX >= 32
+                    case 32: difFixed<32, RIRI_IN>(inout); return;
+#endif
+#if FFT_FIXED_MAX >= 16
+                    case 16: difFixed<16, RIRI_IN>(inout); return;
+#endif
+                    default: difSmall<RIRI_IN>(inout, float_len); return;
+                    }
+                }
+                template <bool RIRI_OUT>
+                HINT_AI_DISPATCH void iditDispatch(Float inout[], size_t float_len)
+                {
+                    switch (float_len)
+                    {
+#if FFT_FIXED_MAX >= 128
+                    case 128: iditFixed<128, RIRI_OUT>(inout); return;
+#endif
+#if FFT_FIXED_MAX >= 64
+                    case 64: iditFixed<64, RIRI_OUT>(inout); return;
+#endif
+#if FFT_FIXED_MAX >= 32
+                    case 32: iditFixed<32, RIRI_OUT>(inout); return;
+#endif
+#if FFT_FIXED_MAX >= 16
+                    case 16: iditFixed<16, RIRI_OUT>(inout); return;
+#endif
+                    default: iditSmall<RIRI_OUT>(inout, float_len); return;
                     }
                 }
 
@@ -723,6 +1646,23 @@ namespace hint
                     table[1].real.set1(fp[0]);
                     table[1].imag.set1(fp[1]);
                     table[1] = table[1].mul(table[0]);
+                }
+                // D24: 返回 table[pop] 的原始 RRII 向量 (它本来就在内存里, 直接 vmovupd,
+                // 不产生任何 spill)。推进逻辑与 iterate() 完全一致。
+                __m256d iterateV()
+                {
+                    static_assert(std::is_same_v<Float, double>, "iterateV: double only");
+                    const __m256d res = _mm256_loadu_pd(reinterpret_cast<const double *>(&table[pop]));
+                    C2 unitx;
+                    index++;
+                    int zero = hint_ctz(index);
+                    auto fp = reinterpret_cast<Float *>(&units[zero + 1]);
+                    unitx.real.set1(fp[0]);
+                    unitx.imag.set1(fp[1]);
+                    pop -= zero;
+                    table[pop + 1] = table[pop].mul(unitx);
+                    pop++;
+                    return res;
                 }
                 C2 iterate()
                 {
@@ -819,6 +1759,60 @@ namespace hint
                 }
                 c0.store(inout0), c1.reverse().store(inout1);
             }
+
+            // ================= D24: dot_rfftX2 的 C4 (256-bit) 版 =================
+            // 4 个复数整体逆序 = 每个分量一条 vpermpd(0x1B)。
+            HINT_AI C4d c4rev(const C4d &c)
+            {
+                return C4d{_mm256_permute4x64_pd(c.re, 0x1B), _mm256_permute4x64_pd(c.im, 0x1B)};
+            }
+            // C2/RRII 内存 -> 复数逆序的 C4 (镜像端专用)
+            HINT_AI C4d c4loadC2Rev(const double *p)
+            {
+                return c4rev(c4loadC2(p));
+            }
+            // 两个 RRII 旋转因子向量 -> 一个 C4d, 只要 2 条 vperm2f128
+            HINT_AI C4d c4twiddle(const __m256d &w0, const __m256d &w1)
+            {
+                return C4d{_mm256_permute2f128_pd(w0, w1, 0x20), _mm256_permute2f128_pd(w0, w1, 0x31)};
+            }
+            // 表达式结构逐条对齐 dot_rfftX2, 只是宽度 128 -> 256, 逐元素语义不变。
+            HINT_AI void dot_rfftX4(double *inout0, double *inout1, const double *in0, const double *in1,
+                                    const C4d &om, const __m256d &inv)
+            {
+                auto mul1 = [](const C4d &c0, const C4d &c1)
+                {
+                    return C4d{c0.im * c1.re + c0.re * c1.im, c0.im * c1.im - c0.re * c1.re};
+                };
+                auto mul2 = [](const C4d &c0, const C4d &c1)
+                {
+                    return C4d{c0.re * c1.im - c0.im * c1.re, c0.re * c1.re + c0.im * c1.im};
+                };
+                auto compute2 = [&om](const C4d &c0, const C4d &c1, C4d &out0, C4d &out1, auto Func)
+                {
+                    C4d t0{c0.re + c1.re, c0.im - c1.im}, t1{c0.re - c1.re, c0.im + c1.im};
+                    t1 = Func(t1, om);
+                    out0 = C4d{t0.re + t1.re, t0.im + t1.im};
+                    out1 = C4d{t0.re - t1.re, t1.im - t0.im};
+                };
+                C4d c0, c1;
+                {
+                    C4d x0, x1, x2, x3;
+                    c0 = c4loadC2(inout0), c1 = c4loadC2Rev(inout1);
+                    compute2(c0, c1, x0, x1, mul1);
+
+                    c0 = c4loadC2(in0), c1 = c4loadC2Rev(in1);
+                    compute2(c0, c1, x2, x3, mul1);
+
+                    c0 = c4mul(x0, x2);
+                    c0.re = c0.re * inv, c0.im = c0.im * inv;
+                    c1 = c4mul(x1, x3);
+                    c1.re = c1.re * inv, c1.im = c1.im * inv;
+                    compute2(c0, c1, c0, c1, mul2);
+                }
+                c4storeC2(inout0, c0);
+                c4storeC2(inout1, c4rev(c1));
+            }
             
             template <size_t RI_DIFF = 1, typename Float>
             inline void real_dot_binrev(Float in_out[], const Float in[], size_t float_len, Float inv = -1)
@@ -899,10 +1893,26 @@ namespace hint
                 real_dot_binrev<2>(in_out, in, 16, inv);
                 inv = 0.25 / float_len;
                 const F2 invx = F2::from1(inv);
-                BinRevTableC2HP<Float> table(31, 32);
+                static thread_local BinRevTableC2HP<Float> table(31, 32);
                 for (size_t begin = 16; begin < float_len; begin *= 2)
                 {
                     table.reset(begin / 2);
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        if (begin >= 32) // begin/8 次 C2 迭代 -> begin/16 次 C4 迭代
+                        {
+                            const __m256d invv = _mm256_set1_pd(inv);
+                            double *q0 = in_out + begin, *q1 = q0 + begin - 8;
+                            const double *q2 = in + begin, *q3 = q2 + begin - 8;
+                            for (size_t u = begin / 16; u > 0; u--, q0 += 8, q1 -= 8, q2 += 8, q3 -= 8)
+                            {
+                                const __m256d w0 = table.iterateV();
+                                const __m256d w1 = table.iterateV();
+                                dot_rfftX4(q0, q1, q2, q3, c4twiddle(w0, w1), invv);
+                            }
+                            continue;
+                        }
+                    }
                     auto it0 = in_out + begin, it1 = it0 + begin - 4;
                     auto it2 = in + begin, it3 = it2 + begin - 4;
                     for (; it0 < it1; it0 += 4, it1 -= 4, it2 += 4, it3 -= 4)
@@ -920,36 +1930,711 @@ namespace hint
                 return fft;
             }
 
+            // ================= radix-3 顶层: 支持 float_len = 3*2^k =================
+            // 布局: FL = 6M floats = 3M complex, 拆 3 块, 每块 M complex (M = 2^t >= 32).
+            //   块 j 放频率 f = 3k'+j 的分量, 块内是长度 M 子变换的位反转序.
+            // 共轭配对 (real-FFT 解包所需的 Z[f] <-> Z[L-f]):
+            //   块0: f=3k' 的伙伴是 3(M-k') -> 仍在块0, 位置镜像与 2 幂情形完全同构,
+            //        且 twiddle w_{2L}^{3k'} = w_{2M}^{k'} 与长度 M 的标准实数解包一致
+            //        => 块0 可原样复用现成的 real_dot_binrev / BinRevTableC2HP 机制.
+            //   块1[p] <-> 块2[M-1-p] (M-1-p 是 p 的按位取反, 位反转后仍是取反 => 全局反转),
+            //        twiddle w_{2L}^{3k'+1} = w_{2M}^{k'} * w_{6M}
+            //        => 与块0 同一个位反转 twiddle 序列, 只差一个常数旋转 w_{FL}.
+            constexpr Float64 SQRT3_DIV2 = 0.866025403784438646763723170752936;
+
+            template <typename Float, int FACTOR>
+            struct FFTTable3
+            {
+                using C2 = Complex2<Float>;
+                // e[n] = w_{3M}^{FACTOR*n}, n = 0..M-1;  C2 索引 c 存 (e[2c], e[2c+1])
+                // 尺寸 M 的表占 table[2M, 4M), 各尺寸首尾相接 (同 FFTTable 的做法)
+                FFTTable3() : cur_m(2), table(8)
+                {
+                    Float theta = Float(-HINT_2PI) * FACTOR / Float(6); // 3*M, M=2
+                    table[4] = 1, table[5] = std::cos(theta);
+                    table[6] = 0, table[7] = std::sin(theta);
+                }
+                void expand(size_t m_need)
+                {
+                    if (m_need <= cur_m)
+                    {
+                        return;
+                    }
+                    table.resize(m_need * 4);
+                    for (size_t m = cur_m * 2; m <= m_need; m *= 2)
+                    {
+                        Float *it = &table[m * 2];
+                        const Float *last = &table[m]; // 尺寸 m/2 的表
+                        Float theta = Float(-HINT_2PI) * FACTOR / Float(3 * m);
+                        C2 unit(Float(std::cos(theta)), Float(std::sin(theta)));
+                        for (size_t c = 0; c < m / 4; c++)
+                        {
+                            C2 o0, o1;
+                            o0.load(last + 4 * c);
+                            o1 = o0.mul(unit);
+                            std::swap(o0.real.x1, o1.real.x0);
+                            std::swap(o0.imag.x1, o1.imag.x0);
+                            o0.store(it + 8 * c);
+                            o1.store(it + 8 * c + 4);
+                        }
+                    }
+                    cur_m = m_need;
+                }
+                const Float *getBegin(size_t m) const { return &table[m * 2]; }
+                size_t cur_m;
+                AlignedVec32<Float> table;
+            };
+
+            template <typename Float>
+            inline FFTTable3<Float, 1> &getTable3a()
+            {
+                static FFTTable3<Float, 1> t;
+                return t;
+            }
+            template <typename Float>
+            inline FFTTable3<Float, 2> &getTable3b()
+            {
+                static FFTTable3<Float, 2> t;
+                return t;
+            }
+
+            // ---- D46: radix-5 twiddle. e[n] = w_{5M}^{FACTOR*n}, 布局同 FFTTable3 ----
+            template <typename Float, int FACTOR>
+            struct FFTTable5
+            {
+                using C2 = Complex2<Float>;
+                FFTTable5() : cur_m(2), table(8)
+                {
+                    Float theta = Float(-HINT_2PI) * FACTOR / Float(10); // 5*M, M=2
+                    table[4] = 1, table[5] = std::cos(theta);
+                    table[6] = 0, table[7] = std::sin(theta);
+                }
+                void expand(size_t m_need)
+                {
+                    if (m_need <= cur_m)
+                    {
+                        return;
+                    }
+                    table.resize(m_need * 4);
+                    for (size_t m = cur_m * 2; m <= m_need; m *= 2)
+                    {
+                        Float *it = &table[m * 2];
+                        const Float *last = &table[m];
+                        Float theta = Float(-HINT_2PI) * FACTOR / Float(5 * m);
+                        C2 unit(Float(std::cos(theta)), Float(std::sin(theta)));
+                        for (size_t c = 0; c < m / 4; c++)
+                        {
+                            C2 o0, o1;
+                            o0.load(last + 4 * c);
+                            o1 = o0.mul(unit);
+                            std::swap(o0.real.x1, o1.real.x0);
+                            std::swap(o0.imag.x1, o1.imag.x0);
+                            o0.store(it + 8 * c);
+                            o1.store(it + 8 * c + 4);
+                        }
+                    }
+                    cur_m = m_need;
+                }
+                const Float *getBegin(size_t m) const { return &table[m * 2]; }
+                size_t cur_m;
+                AlignedVec32<Float> table;
+            };
+            template <typename Float>
+            inline FFTTable5<Float, 1> &getTable5a()
+            {
+                static FFTTable5<Float, 1> t;
+                return t;
+            }
+            template <typename Float>
+            inline FFTTable5<Float, 2> &getTable5b()
+            {
+                static FFTTable5<Float, 2> t;
+                return t;
+            }
+            template <typename Float>
+            inline FFTTable5<Float, 3> &getTable5c()
+            {
+                static FFTTable5<Float, 3> t;
+                return t;
+            }
+            template <typename Float>
+            inline FFTTable5<Float, 4> &getTable5d()
+            {
+                static FFTTable5<Float, 4> t;
+                return t;
+            }
+
+            // p in [0,8) 的 twiddle: w_16^{bitrev_8(p)} (与 Lc 无关), 按 C2 成对给出
+            template <typename Float>
+            inline const Complex2<Float> *smallOmega8()
+            {
+                using C2 = Complex2<Float>;
+                auto w = [](int e)
+                { return std::polar<Float>(1, Float(-HINT_2PI) * e / 16); };
+                // bitrev_8: 0,4,2,6,1,5,3,7
+                static const C2 tab[4] = {
+                    C2(w(0).real(), w(4).real(), w(0).imag(), w(4).imag()),
+                    C2(w(2).real(), w(6).real(), w(2).imag(), w(6).imag()),
+                    C2(w(1).real(), w(5).real(), w(1).imag(), w(5).imag()),
+                    C2(w(3).real(), w(7).real(), w(3).imag(), w(7).imag())};
+                return tab;
+            }
+
+            // radix-3 DIF 级 (顶层): 3 点 DFT + 旋转因子, 之后三块各自走 2 幂 dif
+            template <bool RIRI_IN, typename Float>
+            inline void dif3Stage(Float *inout, size_t m)
+            {
+                using C2 = Complex2<Float>;
+                const Float H = Float(0.5), S = Float(SQRT3_DIV2);
+                auto &t1 = getTable3a<Float>();
+                auto &t2 = getTable3b<Float>();
+                t1.expand(m), t2.expand(m);
+                auto p1 = reinterpret_cast<const C2 *>(t1.getBegin(m));
+                auto p2 = reinterpret_cast<const C2 *>(t2.getBegin(m));
+                Float *b0 = inout, *b1 = inout + m * 2, *b2 = inout + m * 4;
+                for (size_t c = m / 2; c > 0; c--, b0 += 4, b1 += 4, b2 += 4, p1++, p2++)
+                {
+                    C2 a0, a1, a2;
+                    a0.load(b0), a1.load(b1), a2.load(b2);
+                    if (RIRI_IN)
+                    {
+                        a0.permute(), a1.permute(), a2.permute();
+                    }
+                    // w3 = e^{-2pi i/3} = -1/2 - i*sqrt3/2
+                    C2 s = a1 + a2, d = a1 - a2;
+                    C2 r0 = a0 + s;
+                    C2 h(a0.real - s.real * H, a0.imag - s.imag * H);
+                    C2 g(d.imag * (-S), d.real * S); // i*(sqrt3/2)*d
+                    r0.store(b0);
+                    (h - g).mul(p1[0]).store(b1);
+                    (h + g).mul(p2[0]).store(b2);
+                }
+            }
+            // radix-3 IDIT 级 (顶层): 先解旋转因子, 再乘 conj(W3) (不含 1/3, 与 idit 同约定)
+            template <bool RIRI_OUT, typename Float>
+            inline void idit3Stage(Float *inout, size_t m)
+            {
+                using C2 = Complex2<Float>;
+                const Float H = Float(0.5), S = Float(SQRT3_DIV2);
+                auto &t1 = getTable3a<Float>();
+                auto &t2 = getTable3b<Float>();
+                t1.expand(m), t2.expand(m);
+                auto p1 = reinterpret_cast<const C2 *>(t1.getBegin(m));
+                auto p2 = reinterpret_cast<const C2 *>(t2.getBegin(m));
+                Float *b0 = inout, *b1 = inout + m * 2, *b2 = inout + m * 4;
+                for (size_t c = m / 2; c > 0; c--, b0 += 4, b1 += 4, b2 += 4, p1++, p2++)
+                {
+                    C2 t0, u1, u2;
+                    t0.load(b0), u1.load(b1), u2.load(b2);
+                    C2 x1 = u1.mulConj(p1[0]), x2 = u2.mulConj(p2[0]);
+                    C2 s = x1 + x2, d = x1 - x2;
+                    C2 a0 = t0 + s;
+                    C2 h(t0.real - s.real * H, t0.imag - s.imag * H);
+                    C2 g(d.imag * (-S), d.real * S);
+                    C2 a1 = h + g, a2 = h - g;
+                    if (RIRI_OUT)
+                    {
+                        a0.permute(), a1.permute(), a2.permute();
+                    }
+                    a0.store(b0), a1.store(b1), a2.store(b2);
+                }
+            }
+
+            // ================= D25: radix-3 顶层的 C4 版 =================
+            // 原 dif3Stage/idit3Stage 用 Complex2 (RRII): real/imag 各占半个 ymm, 每迭代
+            // 只处理 2 个复数, 且 .mul()/.permute() 都在 128-bit 分区间跨 lane。
+            // C4 版一次吃 4 个复数, 3 点 DFT 的全部加减/缩放变成同 lane 全宽运算; 更关键的是
+            // 它的输出直接就是 C4 布局 -> 下游可以走 difC4<0> (零 shuffle 的 c4load), 省掉
+            // 原 difC4<1> 每迭代 4 次 c4loadC2 = 8 条 perm2f128。idit 方向对称。
+            template <bool RIRI_IN>
+            inline void dif3StageC4(double *inout, size_t m)
+            {
+                const __m256d vh = _mm256_set1_pd(0.5);
+                const __m256d vs = _mm256_set1_pd(double(SQRT3_DIV2));
+                const __m256d vns = _mm256_set1_pd(-double(SQRT3_DIV2));
+                auto &t1 = getTable3a<double>();
+                auto &t2 = getTable3b<double>();
+                t1.expand(m), t2.expand(m);
+                auto p1 = reinterpret_cast<const double *>(__builtin_assume_aligned(t1.getBegin(m), 32));
+                auto p2 = reinterpret_cast<const double *>(__builtin_assume_aligned(t2.getBegin(m), 32));
+                double *b0 = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+                double *b1 = b0 + m * 2, *b2 = b0 + m * 4;
+                for (size_t c = m / 4; c > 0; c--, b0 += 8, b1 += 8, b2 += 8, p1 += 8, p2 += 8)
+                {
+                    HINT_PREFETCH(p1 + 16, 0, 1);
+                    HINT_PREFETCH(p2 + 16, 0, 1);
+                    const C4d a0 = c4loadM<RIRI_IN ? 2 : 1>(b0);
+                    const C4d a1 = c4loadM<RIRI_IN ? 2 : 1>(b1);
+                    const C4d a2 = c4loadM<RIRI_IN ? 2 : 1>(b2);
+                    const __m256d sr = a1.re + a2.re, si = a1.im + a2.im;
+                    const __m256d dr = a1.re - a2.re, di = a1.im - a2.im;
+                    const __m256d hr = a0.re - sr * vh, hi = a0.im - si * vh;
+                    const __m256d gr = di * vns, gi = dr * vs;
+                    c4store(b0, C4d{a0.re + sr, a0.im + si});
+                    c4store(b1, c4mul(C4d{hr - gr, hi - gi}, c4loadC2(p1)));
+                    c4store(b2, c4mul(C4d{hr + gr, hi + gi}, c4loadC2(p2)));
+                }
+            }
+            template <bool RIRI_OUT>
+            inline void idit3StageC4(double *inout, size_t m)
+            {
+                const __m256d vh = _mm256_set1_pd(0.5);
+                const __m256d vs = _mm256_set1_pd(double(SQRT3_DIV2));
+                const __m256d vns = _mm256_set1_pd(-double(SQRT3_DIV2));
+                auto &t1 = getTable3a<double>();
+                auto &t2 = getTable3b<double>();
+                t1.expand(m), t2.expand(m);
+                auto p1 = reinterpret_cast<const double *>(__builtin_assume_aligned(t1.getBegin(m), 32));
+                auto p2 = reinterpret_cast<const double *>(__builtin_assume_aligned(t2.getBegin(m), 32));
+                double *b0 = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+                double *b1 = b0 + m * 2, *b2 = b0 + m * 4;
+                for (size_t c = m / 4; c > 0; c--, b0 += 8, b1 += 8, b2 += 8, p1 += 8, p2 += 8)
+                {
+                    HINT_PREFETCH(p1 + 16, 0, 1);
+                    HINT_PREFETCH(p2 + 16, 0, 1);
+                    const C4d t0 = c4load(b0);
+                    const C4d x1 = c4mulConj(c4load(b1), c4loadC2(p1));
+                    const C4d x2 = c4mulConj(c4load(b2), c4loadC2(p2));
+                    const __m256d sr = x1.re + x2.re, si = x1.im + x2.im;
+                    const __m256d dr = x1.re - x2.re, di = x1.im - x2.im;
+                    const __m256d hr = t0.re - sr * vh, hi = t0.im - si * vh;
+                    const __m256d gr = di * vns, gi = dr * vs;
+                    c4storeM<RIRI_OUT ? 2 : 1>(b0, C4d{t0.re + sr, t0.im + si});
+                    c4storeM<RIRI_OUT ? 2 : 1>(b1, C4d{hr + gr, hi + gi});
+                    c4storeM<RIRI_OUT ? 2 : 1>(b2, C4d{hr - gr, hi - gi});
+                }
+            }
+
+
+            // ================= D46: radix-5 顶层蝶形 =================
+            // W5 = e^{-2pi i/5};  c1=Re W5, s1=-Im W5, c2=Re W5^2, s2=-Im W5^2
+            //   A0 = a0+a1+a2+a3+a4
+            //   t1=a1+a4, t2=a2+a3, t3=a1-a4, t4=a2-a3
+            //   u1 = a0 + t1*c1 + t2*c2 ; v1 = t3*s1 + t4*s2
+            //   u2 = a0 + t1*c2 + t2*c1 ; v2 = t3*s2 - t4*s1
+            //   A1 = u1 - i*v1, A4 = u1 + i*v1, A2 = u2 - i*v2, A3 = u2 + i*v2
+            // 之后 A_j *= w_{5M}^{j*n} (第 j 张表), 五块各自走 2 幂 dif。
+            constexpr Float64 R5_C1 = 0.309016994374947424102293417183;
+            constexpr Float64 R5_S1 = 0.951056516295153572116439333379;
+            constexpr Float64 R5_C2 = -0.809016994374947424102293417183;
+            constexpr Float64 R5_S2 = 0.587785252292473129078558064009;
+
+            template <bool RIRI_IN, typename Float>
+            inline void dif5Stage(Float *inout, size_t m)
+            {
+                using C2 = Complex2<Float>;
+                const Float c1 = Float(R5_C1), s1 = Float(R5_S1);
+                const Float c2 = Float(R5_C2), s2 = Float(R5_S2);
+                auto &t1t = getTable5a<Float>();
+                auto &t2t = getTable5b<Float>();
+                auto &t3t = getTable5c<Float>();
+                auto &t4t = getTable5d<Float>();
+                t1t.expand(m), t2t.expand(m), t3t.expand(m), t4t.expand(m);
+                auto p1 = reinterpret_cast<const C2 *>(t1t.getBegin(m));
+                auto p2 = reinterpret_cast<const C2 *>(t2t.getBegin(m));
+                auto p3 = reinterpret_cast<const C2 *>(t3t.getBegin(m));
+                auto p4 = reinterpret_cast<const C2 *>(t4t.getBegin(m));
+                Float *b0 = inout, *b1 = inout + m * 2, *b2 = inout + m * 4;
+                Float *b3 = inout + m * 6, *b4 = inout + m * 8;
+                for (size_t c = m / 2; c > 0; c--, b0 += 4, b1 += 4, b2 += 4, b3 += 4, b4 += 4,
+                            p1++, p2++, p3++, p4++)
+                {
+                    C2 a0, a1, a2, a3, a4;
+                    a0.load(b0), a1.load(b1), a2.load(b2), a3.load(b3), a4.load(b4);
+                    if (RIRI_IN)
+                    {
+                        a0.permute(), a1.permute(), a2.permute(), a3.permute(), a4.permute();
+                    }
+                    C2 t1 = a1 + a4, t2 = a2 + a3, t3 = a1 - a4, t4 = a2 - a3;
+                    C2 u1(a0.real + t1.real * c1 + t2.real * c2,
+                          a0.imag + t1.imag * c1 + t2.imag * c2);
+                    C2 u2(a0.real + t1.real * c2 + t2.real * c1,
+                          a0.imag + t1.imag * c2 + t2.imag * c1);
+                    C2 v1(t3.real * s1 + t4.real * s2, t3.imag * s1 + t4.imag * s2);
+                    C2 v2(t3.real * s2 - t4.real * s1, t3.imag * s2 - t4.imag * s1);
+                    C2 A0 = a0 + t1 + t2;
+                    C2 A1(u1.real + v1.imag, u1.imag - v1.real);
+                    C2 A4(u1.real - v1.imag, u1.imag + v1.real);
+                    C2 A2(u2.real + v2.imag, u2.imag - v2.real);
+                    C2 A3(u2.real - v2.imag, u2.imag + v2.real);
+                    A0.store(b0);
+                    A1.mul(p1[0]).store(b1);
+                    A2.mul(p2[0]).store(b2);
+                    A3.mul(p3[0]).store(b3);
+                    A4.mul(p4[0]).store(b4);
+                }
+            }
+            // 逆: 先解 twiddle (mulConj), 再乘 conj(W5) (不含 1/5, 与 idit 同约定)
+            template <bool RIRI_OUT, typename Float>
+            inline void idit5Stage(Float *inout, size_t m)
+            {
+                using C2 = Complex2<Float>;
+                const Float c1 = Float(R5_C1), s1 = Float(R5_S1);
+                const Float c2 = Float(R5_C2), s2 = Float(R5_S2);
+                auto &t1t = getTable5a<Float>();
+                auto &t2t = getTable5b<Float>();
+                auto &t3t = getTable5c<Float>();
+                auto &t4t = getTable5d<Float>();
+                t1t.expand(m), t2t.expand(m), t3t.expand(m), t4t.expand(m);
+                auto p1 = reinterpret_cast<const C2 *>(t1t.getBegin(m));
+                auto p2 = reinterpret_cast<const C2 *>(t2t.getBegin(m));
+                auto p3 = reinterpret_cast<const C2 *>(t3t.getBegin(m));
+                auto p4 = reinterpret_cast<const C2 *>(t4t.getBegin(m));
+                Float *b0 = inout, *b1 = inout + m * 2, *b2 = inout + m * 4;
+                Float *b3 = inout + m * 6, *b4 = inout + m * 8;
+                for (size_t c = m / 2; c > 0; c--, b0 += 4, b1 += 4, b2 += 4, b3 += 4, b4 += 4,
+                            p1++, p2++, p3++, p4++)
+                {
+                    C2 y0, y1, y2, y3, y4;
+                    y0.load(b0), y1.load(b1), y2.load(b2), y3.load(b3), y4.load(b4);
+                    C2 x1 = y1.mulConj(p1[0]), x2 = y2.mulConj(p2[0]);
+                    C2 x3 = y3.mulConj(p3[0]), x4 = y4.mulConj(p4[0]);
+                    C2 t1 = x1 + x4, t2 = x2 + x3, t3 = x1 - x4, t4 = x2 - x3;
+                    C2 u1(y0.real + t1.real * c1 + t2.real * c2,
+                          y0.imag + t1.imag * c1 + t2.imag * c2);
+                    C2 u2(y0.real + t1.real * c2 + t2.real * c1,
+                          y0.imag + t1.imag * c2 + t2.imag * c1);
+                    C2 v1(t3.real * s1 + t4.real * s2, t3.imag * s1 + t4.imag * s2);
+                    C2 v2(t3.real * s2 - t4.real * s1, t3.imag * s2 - t4.imag * s1);
+                    C2 a0 = y0 + t1 + t2;
+                    C2 a1(u1.real - v1.imag, u1.imag + v1.real);
+                    C2 a4(u1.real + v1.imag, u1.imag - v1.real);
+                    C2 a2(u2.real - v2.imag, u2.imag + v2.real);
+                    C2 a3(u2.real + v2.imag, u2.imag - v2.real);
+                    if (RIRI_OUT)
+                    {
+                        a0.permute(), a1.permute(), a2.permute(), a3.permute(), a4.permute();
+                    }
+                    a0.store(b0), a1.store(b1), a2.store(b2), a3.store(b3), a4.store(b4);
+                }
+            }
+
+            // D46: 跨块共轭配对点乘 (块 j 与块 R-j, 位置 p <-> m-1-p)
+            //   twiddle = 与块0 完全相同的位反转序列 * 常数 rot = w_FL^j
+            //   (radix-3 的块1<->块2 就是本函数 j=1 的特例; 那份代码保持原样不动)
+            template <typename Float>
+            inline void dot_cross_blocks(Float *o1, Float *o2, const Float *n1, const Float *n2,
+                                         size_t blk, const Complex2<Float> &rot,
+                                         const Float2<Float> &invx, Float inv4,
+                                         BinRevTableC2HP<Float> &table)
+            {
+                using C2 = Complex2<Float>;
+                {
+                    const C2 *sm = smallOmega8<Float>();
+                    for (size_t t = 0; t < 4; t++)
+                    {
+                        const size_t f = 4 * t;
+                        dot_rfftX2(o1 + f, o2 + blk - 4 - f, n1 + f, n2 + blk - 4 - f,
+                                   sm[t].mul(rot), invx);
+                    }
+                }
+                for (size_t begin = 16; begin < blk; begin *= 2)
+                {
+                    table.reset(begin / 2);
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        const __m256d invv = _mm256_set1_pd(inv4);
+                        const C4d rotv{_mm256_set1_pd(rot.real.x0), _mm256_set1_pd(rot.imag.x0)};
+                        double *p0 = o1 + begin, *p1 = o2 + blk - 8 - begin;
+                        const double *r0 = n1 + begin, *r1 = n2 + blk - 8 - begin;
+                        for (size_t u = begin / 8; u > 0; u--, p0 += 8, p1 -= 8, r0 += 8, r1 -= 8)
+                        {
+                            const __m256d w0 = table.iterateV();
+                            const __m256d w1 = table.iterateV();
+                            dot_rfftX4(p0, p1, r0, r1, c4mul(c4twiddle(w0, w1), rotv), invv);
+                        }
+                        continue;
+                    }
+                    auto i0 = o1 + begin, i1 = o2 + blk - 4 - begin;
+                    auto j0 = n1 + begin, j1 = n2 + blk - 4 - begin;
+                    for (size_t u = begin / 4; u > 0; u--, i0 += 4, i1 -= 4, j0 += 4, j1 -= 4)
+                    {
+                        dot_rfftX2(i0, i1, j0, j1, table.iterate().mul(rot), invx);
+                    }
+                }
+            }
+
+            // D46: float_len = 5*2^k 的实数频域点乘
+            //   N_c = float_len/2 = 5m 个复数, 块 j 位置 p 承载频点 f = 5p + j
+            //   共轭伙伴 N_c-f = 5(m-1-p) + (5-j)  => 块0 自配对(同 2 幂), 块1<->4, 块2<->3
+            //   twiddle w_FL^{5p+j} = w_{2m}^p * w_FL^j  => 复用块0 序列 * 常数
+            template <typename Float>
+            inline void real_dot_binrev5(Float in_out[], const Float in[], size_t float_len)
+            {
+                using F2 = Float2<Float>;
+                using C2 = Complex2<Float>;
+                const size_t m = float_len / 10, blk = m * 2;
+                const Float inv = Float(1) / Float(float_len);
+                const Float inv4 = Float(0.25) / Float(float_len);
+                const F2 invx = F2::from1(inv4);
+                static thread_local BinRevTableC2HP<Float> table(31, 32);
+                // ---- 块0: 与 2 幂长度 blk 的实数解包完全同构 ----
+                real_dot_binrev<2>(in_out, in, 16, inv);
+                for (size_t begin = 16; begin < blk; begin *= 2)
+                {
+                    table.reset(begin / 2);
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        if (begin >= 32)
+                        {
+                            const __m256d invv = _mm256_set1_pd(inv4);
+                            double *q0 = in_out + begin, *q1 = q0 + begin - 8;
+                            const double *q2 = in + begin, *q3 = q2 + begin - 8;
+                            for (size_t u = begin / 16; u > 0; u--, q0 += 8, q1 -= 8, q2 += 8, q3 -= 8)
+                            {
+                                const __m256d w0 = table.iterateV();
+                                const __m256d w1 = table.iterateV();
+                                dot_rfftX4(q0, q1, q2, q3, c4twiddle(w0, w1), invv);
+                            }
+                            continue;
+                        }
+                    }
+                    auto it0 = in_out + begin, it1 = it0 + begin - 4;
+                    auto it2 = in + begin, it3 = it2 + begin - 4;
+                    for (; it0 < it1; it0 += 4, it1 -= 4, it2 += 4, it3 -= 4)
+                    {
+                        dot_rfftX2(it0, it1, it2, it3, table.iterate(), invx);
+                    }
+                }
+                // ---- 块1<->块4 (rot^1), 块2<->块3 (rot^2) ----
+                const Float ang = Float(-HINT_2PI) / Float(float_len);
+                const C2 rot1(Float(std::cos(ang)), Float(std::sin(ang)));
+                const C2 rot2(Float(std::cos(2 * ang)), Float(std::sin(2 * ang)));
+                dot_cross_blocks(in_out + blk, in_out + blk * 4, in + blk, in + blk * 4,
+                                 blk, rot1, invx, inv4, table);
+                dot_cross_blocks(in_out + blk * 2, in_out + blk * 3, in + blk * 2, in + blk * 3,
+                                 blk, rot2, invx, inv4, table);
+            }
+
+            template <typename Float>
+            inline void real_dot_binrev3(Float in_out[], const Float in[], size_t float_len)
+            {
+                using F2 = Float2<Float>;
+                using C2 = Complex2<Float>;
+                const size_t m = float_len / 6, blk = m * 2;
+                const Float inv = Float(1) / Float(float_len);
+                const F2 invx = F2::from1(Float(0.25) / Float(float_len));
+                static thread_local BinRevTableC2HP<Float> table(31, 32);
+                // ---- 块0: 与 2 幂长度 blk 的实数解包完全同构 ----
+                real_dot_binrev<2>(in_out, in, 16, inv);
+                for (size_t begin = 16; begin < blk; begin *= 2)
+                {
+                    table.reset(begin / 2);
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        if (begin >= 32)
+                        {
+                            const __m256d invv = _mm256_set1_pd(Float(0.25) / Float(float_len));
+                            double *q0 = in_out + begin, *q1 = q0 + begin - 8;
+                            const double *q2 = in + begin, *q3 = q2 + begin - 8;
+                            for (size_t u = begin / 16; u > 0; u--, q0 += 8, q1 -= 8, q2 += 8, q3 -= 8)
+                            {
+                                const __m256d w0 = table.iterateV();
+                                const __m256d w1 = table.iterateV();
+                                dot_rfftX4(q0, q1, q2, q3, c4twiddle(w0, w1), invv);
+                            }
+                            continue;
+                        }
+                    }
+                    auto it0 = in_out + begin, it1 = it0 + begin - 4;
+                    auto it2 = in + begin, it3 = it2 + begin - 4;
+                    for (; it0 < it1; it0 += 4, it1 -= 4, it2 += 4, it3 -= 4)
+                    {
+                        dot_rfftX2(it0, it1, it2, it3, table.iterate(), invx);
+                    }
+                }
+                // ---- 块1[p] <-> 块2[M-1-p], twiddle 同序列 * 常数 w_{FL} ----
+                Float *o1 = in_out + blk, *o2 = in_out + blk * 2;
+                const Float *n1 = in + blk, *n2 = in + blk * 2;
+                const Float ang = Float(-HINT_2PI) / Float(float_len);
+                const C2 rot(Float(std::cos(ang)), Float(std::sin(ang)));
+                {
+                    const C2 *sm = smallOmega8<Float>();
+                    for (size_t t = 0; t < 4; t++)
+                    {
+                        const size_t f = 4 * t;
+                        dot_rfftX2(o1 + f, o2 + blk - 4 - f, n1 + f, n2 + blk - 4 - f,
+                                   sm[t].mul(rot), invx);
+                    }
+                }
+                // 注意: begin 是"块内 float 偏移", 块1 有 M complex = blk floats,
+                // 因此层循环上界必须是 blk (不是 m=M, 那是 complex 计数, 会漏掉最后一层)
+                for (size_t begin = 16; begin < blk; begin *= 2)
+                {
+                    table.reset(begin / 2);
+                    if constexpr (std::is_same_v<Float, double>)
+                    {
+                        // begin/4 次 C2 迭代 (begin >= 16 -> 至少 4 次) -> begin/8 次 C4
+                        const __m256d invv = _mm256_set1_pd(Float(0.25) / Float(float_len));
+                        const C4d rotv{_mm256_set1_pd(rot.real.x0), _mm256_set1_pd(rot.imag.x0)};
+                        double *p0 = o1 + begin, *p1 = o2 + blk - 8 - begin;
+                        const double *r0 = n1 + begin, *r1 = n2 + blk - 8 - begin;
+                        for (size_t u = begin / 8; u > 0; u--, p0 += 8, p1 -= 8, r0 += 8, r1 -= 8)
+                        {
+                            const __m256d w0 = table.iterateV();
+                            const __m256d w1 = table.iterateV();
+                            dot_rfftX4(p0, p1, r0, r1, c4mul(c4twiddle(w0, w1), rotv), invv);
+                        }
+                        continue;
+                    }
+                    auto i0 = o1 + begin, i1 = o2 + blk - 4 - begin;
+                    auto j0 = n1 + begin, j1 = n2 + blk - 4 - begin;
+                    for (size_t u = begin / 4; u > 0; u--, i0 += 4, i1 -= 4, j0 += 4, j1 -= 4)
+                    {
+                        dot_rfftX2(i0, i1, j0, j1, table.iterate().mul(rot), invx);
+                    }
+                }
+            }
+
+#ifdef FFTHIST
+            // 诊断用: 统计所有正/逆变换的长度直方图 (不进入正式构建)
+            inline std::map<size_t, size_t> &fftHist()
+            {
+                static std::map<size_t, size_t> h;
+                static bool reg = (std::atexit([]
+                                               {
+                    double work = 0; size_t n = 0;
+                    fprintf(stderr, "==== FFT length histogram ====\n");
+                    for (auto &kv : fftHist()) {
+                        double w = double(kv.first) * std::log2(double(kv.first)) * kv.second;
+                        work += w; n += kv.second;
+                        fprintf(stderr, "  len=%-9zu x%-7zu  %s  NlogN=%.4g\n",
+                                kv.first, kv.second,
+                                (kv.first & (kv.first - 1)) ? "fft3" : "2pow", w);
+                    }
+                    fprintf(stderr, "  TOTAL transforms=%zu  sum(N*logN)=%.6g\n", n, work);
+                    if (const char *fn = getenv("FFTHIST_CSV")) {
+                        if (FILE *f = fopen(fn, "w")) {
+                            fprintf(f, "len,cnt\n");
+                            for (auto &kv : fftHist()) fprintf(f, "%zu,%zu\n", kv.first, kv.second);
+                            fclose(f);
+                        }
+                    } }),
+                                   true);
+                (void)reg;
+                return h;
+            }
+#define FFTHIST_TICK(n) (fftHist()[(n)]++)
+#else
+#define FFTHIST_TICK(n) ((void)0)
+#endif
+
+            // ---- 统一入口: float_len 可以是 2^k 或 3*2^k ----
+            template <typename Float>
+            inline void rdif(Float *p, size_t float_len)
+            {
+                FFTHIST_TICK(float_len);
+                auto &fft = getSharedFFT<Float>();
+                if (is_fft5(float_len))
+                {
+                    const size_t m5 = float_len / 10, blk5 = m5 * 2;
+                    fft.expand(blk5);
+                    dif5Stage<true>(p, m5);
+                    for (size_t i = 0; i < 5; i++)
+                    {
+                        fft.template dif<false>(p + blk5 * i, blk5);
+                    }
+                    return;
+                }
+                if (!is_fft3(float_len))
+                {
+                    fft.expand(float_len);
+                    fft.template dif<true>(p, float_len);
+                    return;
+                }
+                const size_t m = float_len / 6, blk = m * 2;
+                fft.expand(blk);
+                if constexpr (std::is_same_v<Float, double>)
+                {
+                    // D25: radix-3 级直接吐 C4, 三个子块用 IN_MODE=0 (零 shuffle)
+                    if (blk > FFT_C4_MIN && (m & 3) == 0)
+                    {
+                        dif3StageC4<true>(reinterpret_cast<double *>(p), m);
+                        fft.template difC4<0>(p, blk);
+                        fft.template difC4<0>(p + blk, blk);
+                        fft.template difC4<0>(p + blk * 2, blk);
+                        return;
+                    }
+                }
+                dif3Stage<true>(p, m);
+                fft.template dif<false>(p, blk);
+                fft.template dif<false>(p + blk, blk);
+                fft.template dif<false>(p + blk * 2, blk);
+            }
+            template <typename Float>
+            inline void ridit(Float *p, size_t float_len)
+            {
+                FFTHIST_TICK(float_len);
+                auto &fft = getSharedFFT<Float>();
+                if (is_fft5(float_len))
+                {
+                    const size_t m5 = float_len / 10, blk5 = m5 * 2;
+                    fft.expand(blk5);
+                    for (size_t i = 0; i < 5; i++)
+                    {
+                        fft.template idit<false>(p + blk5 * i, blk5);
+                    }
+                    idit5Stage<true>(p, m5);
+                    return;
+                }
+                if (!is_fft3(float_len))
+                {
+                    fft.expand(float_len);
+                    fft.template idit<true>(p, float_len);
+                    return;
+                }
+                const size_t m = float_len / 6, blk = m * 2;
+                fft.expand(blk);
+                if constexpr (std::is_same_v<Float, double>)
+                {
+                    if (blk > FFT_C4_MIN && (m & 3) == 0)
+                    {
+                        fft.template iditC4<0>(p, blk);
+                        fft.template iditC4<0>(p + blk, blk);
+                        fft.template iditC4<0>(p + blk * 2, blk);
+                        idit3StageC4<true>(reinterpret_cast<double *>(p), m);
+                        return;
+                    }
+                }
+                fft.template idit<false>(p, blk);
+                fft.template idit<false>(p + blk, blk);
+                fft.template idit<false>(p + blk * 2, blk);
+                idit3Stage<true>(p, m);
+            }
+            template <typename Float>
+            inline void rdot(Float *in_out, const Float *in, size_t float_len)
+            {
+                if (is_fft5(float_len))
+                {
+                    real_dot_binrev5(in_out, in, float_len);
+                }
+                else if (!is_fft3(float_len))
+                {
+                    real_dot_binrev2(in_out, in, float_len);
+                }
+                else
+                {
+                    real_dot_binrev3(in_out, in, float_len);
+                }
+            }
+
             template <typename Float>
             inline void real_conv(Float *in_out1, Float *in2, size_t float_len)
             {
-                assert(is_2pow(float_len));
+                assert(is_2pow(float_len) || is_fft3(float_len) || is_fft5(float_len));
                 assert(float_len <= FFT_MAX_LEN * 2);
-                HINT_ASSUME(is_2pow(float_len));
                 HINT_ASSUME(float_len >= 16);
-                auto &fft = getSharedFFT<Float>();
-                fft.expand(float_len);
-                fft.template dif<true>(in_out1, float_len);
+                rdif(in_out1, float_len);
                 if (in_out1 != in2)
                 {
-                    fft.template dif<true>(in2, float_len);
+                    rdif(in2, float_len);
                 }
-                real_dot_binrev2(in_out1, in2, float_len);
-                fft.template idit<true>(in_out1, float_len);
+                rdot(in_out1, in2, float_len);
+                ridit(in_out1, float_len);
             }
         }
     }
-    constexpr size_t count_base10(uint64_t num)
-    {
-        size_t count = 0;
-        while (num)
-        {
-            num /= 10;
-            count++;
-        }
-        return count;
-    }
-    // 64KB 查表法：2 字节 ASCII → 0-99 (从 fusion.cpp 移植)
+// 64KB 查表法：2 字节 ASCII → 0-99 (从 fusion.cpp 移植)
     struct ParseTable {
         uint8_t table[0x10000];
         constexpr ParseTable() : table() {
@@ -1004,34 +2689,7 @@ namespace hint
     }
     // OPT: AVX2 向量化 uint16→double 转换 (16 元素/次), 替代 std::copy 的标量逐元素转换
     // 用于 FFT 输入准备: limb 数组 (uint16) → double 缓冲区
-    inline void copyU16ToF64(const uint16_t *src, double *dst, size_t n)
-    {
-        size_t j = 0;
-#if defined(__AVX2__)
-        for (; j + 16 <= n; j += 16)
-        {
-            // 加载 32 字节 = 16 个 uint16, 拆成高低各 8 个
-            __m256i vals = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(src + j));
-            __m128i lo128 = _mm256_castsi256_si128(vals);      // 低 8 字节 = src[j..j+7]
-            __m128i hi128 = _mm256_extracti128_si256(vals, 1); // 高 8 字节 = src[j+8..j+15]
-            __m256i lo32 = _mm256_cvtepu16_epi32(lo128);       // 低 8 个 uint16 → 8 个 int32
-            __m256i hi32 = _mm256_cvtepu16_epi32(hi128);       // 高 8 个 uint16 → 8 个 int32
-            __m256d d0 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(lo32));
-            __m256d d1 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(lo32, 1));
-            __m256d d2 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(hi32));
-            __m256d d3 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(hi32, 1));
-            _mm256_storeu_pd(dst + j, d0);
-            _mm256_storeu_pd(dst + j + 4, d1);
-            _mm256_storeu_pd(dst + j + 8, d2);
-            _mm256_storeu_pd(dst + j + 12, d3);
-        }
-#endif
-        for (; j < n; j++)
-        {
-            dst[j] = src[j];
-        }
-    }
-    // OPT: Merge copyU16ToF64 + std::fill into single pass to reduce memory traffic
+// OPT: Merge copyU16ToF64 + std::fill into single pass to reduce memory traffic
     // Copies n uint16 to double, then fills remaining [n, total) with 0.0
     inline void copyU16ToF64AndFill(const uint16_t *src, double *dst, size_t n, size_t total)
     {
@@ -1163,12 +2821,32 @@ namespace hint
         return a - b + (base & mask);
     }
 
+    // D19: the scalar back-scan costs ~3 Ir per zero limb and shows up as 4.9M Ir
+    // (100% scalar) inside removeLeadingZero on length_ratio_integer_03, because
+    // the mu-division block loop keeps producing operands with long zero tails.
+    // vptest clears 16 limbs at a time instead, ~0.25 Ir per limb.
     template <typename T>
     constexpr size_t count_true_length(const T array[], size_t length)
     {
         if (nullptr == array)
         {
             return 0;
+        }
+        if constexpr (sizeof(T) == 2)
+        {
+            if (!std::is_constant_evaluated())
+            {
+                while (length >= 16)
+                {
+                    __m256i v = _mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(array + length - 16));
+                    if (!_mm256_testz_si256(v, v))
+                    {
+                        break;
+                    }
+                    length -= 16;
+                }
+            }
         }
         // __builtin_expect: trailing zeros are rare for most inputs — hint unlikely
         while (length > 0 && HINT_UNLIKELY(array[length - 1] == 0))
@@ -1220,7 +2898,38 @@ namespace hint
         // N*(BASE-1)^2 ~ N*10^8; for double-precision FFT N < 2^50/10^8 ~ 11263 limbs
         // => s_max ~ 1.1e12, well within the safe range (2000x margin).
         static constexpr uint64_t BARRETT_M = 0x68DB8BAC710CCULL;
-        static uint64_t divBASE(uint64_t s) { return (uint64_t)((unsigned __int128)s * BARRETT_M >> 64); }
+        static HINT_AI uint64_t divBASE(uint64_t s)
+        {
+#if defined(__BMI2__) && defined(__x86_64__) && defined(__GNUC__)
+            // D45: 真 mulx —— 魔数常驻 RDX (循环不变量, GCC 提到循环外),
+            //      lo/hi 落自由寄存器, 一条指令替掉 (mov %rX,%rax + mul %rM)。
+            //      不用 _mulx_u64: 其 &lo 指针出参会把低位实体化到栈 (见 D43)。
+            uint64_t _lo, _hi;
+            __asm__("mulx %[s], %[lo], %[hi]"
+                    : [lo] "=r"(_lo), [hi] "=r"(_hi)
+                    : "d"(BARRETT_M), [s] "r"(s));
+            (void)_lo;
+            return _hi;
+#else
+            return (uint64_t)((unsigned __int128)s * BARRETT_M >> 64);
+#endif
+        }
+        // ================= D42: double -> uint64 单指令转换 =================
+        // 原写法 (uint64_t)(v + 0.5) 在 x86-64 上**没有**单条指令: double->unsigned
+        // 缺少硬件支持, GCC 必须发 2^63 护栏, 实际展开为
+        //     vaddsd (+0.5) ; vcvttsd2si ; vcomisd 2^63 ; jae <unsigned fixup>
+        // 反汇编 carryPropSeg 热循环 (4 段并行, 每轮 4 limb) 实测 ~50 条指令,
+        // 其中 4 条 vaddsd + 3 组 (vcomisd+jae) 纯属浪费, 且分支汇合点逼出 4 次栈溢出。
+        //
+        // vcvtsd2si 是**有符号**转换, 硬件单指令, 用 MXCSR 当前舍入模式 (就近偶数)。
+        // 等价性: FFT 卷积输入非负 => 输出 v >= -0.25, 且误差界给出 |v-round(v)|<0.25
+        //   => round_to_nearest(v) == trunc(v + 0.5) 逐位相同 (v 不可能落在 .5 边界);
+        //   且 v < N*(BASE-1)^2 ~ 1e13 << 2^63 不溢出。
+        // FTZ/DAZ 只影响非规格化, 不改舍入方向; 本处量级 ~1e12 与非规格化无关。
+        static HINT_AI uint64_t cvtRoundU64(const double *p)
+        {
+            return (uint64_t)_mm_cvtsd_si64(_mm_load_sd(p));
+        }
         Integer() : data(), sign(false) {}
         
         Integer(const Integer &input) = default;
@@ -1277,10 +2986,7 @@ namespace hint
             }
             return data[0] % 2 == 1;
         }
-        bool isEven() const
-        {
-            return !isOdd();
-        }
+
         bool isZero() const
         {
             return length() == 0;
@@ -1299,15 +3005,7 @@ namespace hint
         {
             return data.size();
         }
-        size_t lengthBase10() const
-        {
-            size_t len = length();
-            if (len == 0)
-            {
-                return 1;
-            }
-            return (len - 1) * BASE_DIGIT + count_base10(data[len - 1]);
-        }
+
         void removeLeadingZero()
         {
             size_t len = length();
@@ -1324,41 +3022,7 @@ namespace hint
         {
             fromCharRange(str.data(), str.data() + str.size());
         }
-	void from_c_str(const char * str) {
-            if (str[0] == '\0')
-            {
-                return;
-            }
-	    int sz = 0;
-	    for (; str[sz] != '\0'; sz++);
-            auto p_begin = str, p_end = p_begin + sz;
-            if (str[0] == '-')
-            {
-                sign = true;
-                p_begin++;
-            }
-            size_t len = p_end - p_begin;
-            data.resize((len + BASE_DIGIT - 1) / BASE_DIGIT);
-            size_t i = 0;
-            while (p_end > p_begin + 3)
-            {
-                p_end -= BASE_DIGIT;
-                data[i] = str4toi(p_end);
-                i++;
-            }
-            if (p_end > p_begin)
-            {
-                data[i] = 0;
-                while (p_end > p_begin)
-                {
-                    data[i] *= 10;
-                    data[i] += p_begin[0] - '0';
-                    p_begin++;
-                }
-            }
-            removeLeadingZero();
-		
-	}
+
         std::string toString() const
         {
             std::string res;
@@ -1384,53 +3048,7 @@ namespace hint
             }
             return res;
         }
-	const char* to_c_str(char* res) const {
-            
-            std::vector<char> buf(4);
-            if (isZero())
-            {
-		res[0] = '0';
-		res[1] = '\0';
-                
-            }
-            else
-            {
-                /*if (isNeg())
-                {
-                    res = '-';
-                }*/
-		char *p = res;
-		int x = data.back();
-		int cnt = 0;
-		while (x) {
-			cnt++;
-			x /= 10;
-		}
-		x = data.back();
-		p = res + cnt - 1;
-		while (x) {
-			*p = (x % 10) + '0';
-			x /= 10;
-			p--;
-		}
-		p = res + cnt;
-                
-                size_t i = data.size() - 1;
-                while (i > 0)
-                {
-                    i--;
-                    itostr4(data[i], buf.data());
-                    
-		    for (int j = 0; j < 4; j++) {
-		    	*p = buf[j];
-			p++;
-		    }
-                }
-		*p = '\0';
-            }
-	    return res;
 
-	}
         // 零拷贝写入到 out，返回写入字节数（不含 '\0'）
         size_t writeTo(char* out) const
         {
@@ -1632,7 +3250,7 @@ namespace hint
         // 16 个 limb 一次处理 (8 个打包 uint32 = 1 个 __m256i)
         // 关键不变量: limb 最大 9999, 两 limb 和最大 19998 < 65536, 不会进位到高 16 位
 #pragma GCC push_options
-#pragma GCC target("avx2,fma")
+#pragma GCC target("avx2,fma,bmi,bmi2")
         static bool absAdd_avx2(View in1, View in2, Span out)
         {
             if (in1.size < in2.size)
@@ -1640,34 +3258,41 @@ namespace hint
                 std::swap(in1, in2);
             }
             size_t i = 0;
-            Limb carry = 0;
-            // AVX2 主循环: 每次 16 个 limb
+            // === D11: SWAR 进位链 (同 absSub, 消除 store-forwarding stall) ===
+            // t=a+b, G=(t>=BASE) 生成, P=(t==BASE-1) 传播; A=G,B=G|P 使
+            // gen=A&B=G, prop=A^B=P, 故 s=A+B+cy 一次算完 16 limb 的进位链。
+            uint32_t carry32 = 0;
+            const __m256i vbase = _mm256_set1_epi16(static_cast<short>(BASE));
+            const __m256i vbasem1 = _mm256_set1_epi16(static_cast<short>(BASE - 1));
+            const __m256i vbit = _mm256_setr_epi16(
+                1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+                static_cast<short>(16384), static_cast<short>(32768));
             for (; i + 15 < in2.size; i += 16)
             {
                 __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(in1.ptr + i));
                 __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(in2.ptr + i));
-                __m256i r = _mm256_add_epi32(a, b);
-                alignas(32) uint32_t tmp[8];
-                _mm256_store_si256(reinterpret_cast<__m256i *>(tmp), r);
-                // 串行 carry 传播: 8 步, 每步处理 2 个 limb (lo/hi), 无分支掩码
-                uint32_t c = carry;
-                for (int k = 0; k < 8; k++)
-                {
-                    uint32_t lo = tmp[k] & 0xFFFF;
-                    uint32_t hi = tmp[k] >> 16;
-                    lo += c;
-                    uint32_t clo = lo >= 10000;
-                    lo -= clo * 10000u;
-                    hi += clo;
-                    uint32_t chi = hi >= 10000;
-                    hi -= chi * 10000u;
-                    c = chi;
-                    tmp[k] = lo | (hi << 16);
-                }
-                carry = static_cast<Limb>(c);
-                __m256i out_vec = _mm256_load_si256(reinterpret_cast<const __m256i *>(tmp));
-                _mm256_storeu_si256(reinterpret_cast<__m256i *>(out.ptr + i), out_vec);
+                // t = a + b in [0, 2*BASE-2] < 32768 => signed 比较即 unsigned
+                __m256i t = _mm256_add_epi16(a, b);
+                __m256i gm = _mm256_cmpgt_epi16(t, vbasem1); // t >= BASE   (generate)
+                __m256i pm = _mm256_cmpeq_epi16(t, vbasem1); // t == BASE-1 (propagate)
+                uint32_t G = _pext_u32(static_cast<uint32_t>(_mm256_movemask_epi8(gm)), 0x55555555u);
+                uint32_t P = _pext_u32(static_cast<uint32_t>(_mm256_movemask_epi8(pm)), 0x55555555u);
+                uint32_t A = G, B = G | P;
+                uint32_t s = A + B + carry32;
+                uint32_t cin = s ^ A ^ B; // bit j = 进入 limb j 的进位; bit16 = 总进位
+                uint32_t cout = cin >> 1; // bit j = limb j 的进位输出
+                carry32 = (s >> 16) & 1u;
+                __m256i vcin = _mm256_cmpeq_epi16(
+                    _mm256_and_si256(_mm256_set1_epi16(static_cast<short>(cin)), vbit), vbit);
+                __m256i vcout = _mm256_cmpeq_epi16(
+                    _mm256_and_si256(_mm256_set1_epi16(static_cast<short>(cout)), vbit), vbit);
+                // r = t + cin - (有进位输出处减 BASE)
+                __m256i r = _mm256_sub_epi16(
+                    _mm256_add_epi16(t, _mm256_srli_epi16(vcin, 15)),
+                    _mm256_and_si256(vcout, vbase));
+                _mm256_storeu_si256(reinterpret_cast<__m256i *>(out.ptr + i), r);
             }
+            Limb carry = static_cast<Limb>(carry32);
             // 标量尾部 (8 路展开)
             for (; i + 7 < in2.size; i += 8)
             {
@@ -1699,63 +3324,87 @@ namespace hint
             }
             return carry;
         }
-        // 双肢打包 + AVX2 版本 absSub
-        // 用 bias = BASE|BASE<<16 加到 a 后再减 b, 保证每个 16-bit lane 不下溢
-        // r_limb = a_limb + BASE - b_limb, 范围 [1, 19999]
-        // r >= BASE -> 无借位, 结果 = r - BASE; r < BASE -> 借位, 结果 = r
+        // === D11: SWAR 借位链 absSub (替换原 store-forward-stall 版本) ===
+        // 原版把 __m256i store 到 tmp[] 后立刻标量 4B 读、再 32B 读回,
+        // 宽存窄读 + 窄存宽读两次 store-forwarding 全部失败 (~13cy/次, 每 16 limb 两次),
+        // 向量化的只是廉价的 a+bias-b, 昂贵的借位链仍串行 => 实测比纯标量还慢 1.4x。
+        //
+        // 本版把借位链本身向量化:
+        //   借位递推  C[j] = G[j] | (P[j] & C[j-1])   (G=生成: a<b, P=传播: a==b)
+        //   与二进制加法进位链同构 —— 取 A=G, B=G|P 则 gen=A&B=G, prop=A^B=P (G,P 互斥),
+        //   故一条 32 位整数加法 s=A+B+bin 即把 16 个 limb 的借位一次算完:
+        //     cin = s ^ A ^ B   (bit j = 进入 limb j 的借位, bit16 = 总借出)
+        //   全程无回写往返。实测 0.22 ns/limb, 较原版 4.9x。
         static bool absSub_avx2(View in1, View in2, Span out)
         {
             assert(in1.size >= in2.size);
             size_t i = 0;
-            Limb borrow = 0;
-            __m256i bias_vec = _mm256_set1_epi32(static_cast<int>(10000u | (10000u << 16)));
+            uint32_t borrow = 0;
+            const __m256i vbase = _mm256_set1_epi16(static_cast<short>(BASE));
+            const __m256i vbit = _mm256_setr_epi16(
+                1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+                static_cast<short>(16384), static_cast<short>(32768));
             for (; i + 15 < in2.size; i += 16)
             {
                 __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(in1.ptr + i));
                 __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(in2.ptr + i));
-                __m256i r = _mm256_sub_epi32(_mm256_add_epi32(a, bias_vec), b);
-                alignas(32) uint32_t tmp[8];
-                _mm256_store_si256(reinterpret_cast<__m256i *>(tmp), r);
-                // 串行 borrow 传播: 8 步, 每步处理 2 个 limb (lo/hi), 无分支掩码
-                uint32_t bw = borrow;
-                for (int k = 0; k < 8; k++)
-                {
-                    uint32_t lo = tmp[k] & 0xFFFF;
-                    uint32_t hi = tmp[k] >> 16;
-                    lo -= bw;
-                    uint32_t blo = lo < 10000;
-                    lo -= (1u - blo) * 10000u;
-                    hi -= blo;
-                    uint32_t bhi = hi < 10000;
-                    hi -= (1u - bhi) * 10000u;
-                    bw = bhi;
-                    tmp[k] = lo | (hi << 16);
-                }
-                borrow = static_cast<Limb>(bw);
-                __m256i out_vec = _mm256_load_si256(reinterpret_cast<const __m256i *>(tmp));
-                _mm256_storeu_si256(reinterpret_cast<__m256i *>(out.ptr + i), out_vec);
+                // t = a + BASE - b in [1, 2*BASE-1], 恒 < 32768 => signed 比较即 unsigned
+                __m256i t = _mm256_sub_epi16(_mm256_add_epi16(a, vbase), b);
+                __m256i gm = _mm256_cmpgt_epi16(vbase, t); // t <  BASE <=> a < b   (generate)
+                __m256i pm = _mm256_cmpeq_epi16(t, vbase); // t == BASE <=> a == b  (propagate)
+                uint32_t G = _pext_u32(static_cast<uint32_t>(_mm256_movemask_epi8(gm)), 0x55555555u);
+                uint32_t P = _pext_u32(static_cast<uint32_t>(_mm256_movemask_epi8(pm)), 0x55555555u);
+                uint32_t A = G, B = G | P;
+                uint32_t s = A + B + borrow;
+                uint32_t cin = s ^ A ^ B; // bit j = 进入 limb j 的借位; bit16 = 总借出
+                uint32_t cout = cin >> 1; // bit j = limb j 的借出 (bit15 取自 cin.bit16)
+                borrow = (s >> 16) & 1u;
+                __m256i vcin = _mm256_cmpeq_epi16(
+                    _mm256_and_si256(_mm256_set1_epi16(static_cast<short>(cin)), vbit), vbit);
+                __m256i vcout = _mm256_cmpeq_epi16(
+                    _mm256_and_si256(_mm256_set1_epi16(static_cast<short>(cout)), vbit), vbit);
+                // r = t - cin - (无借出处再减 BASE)
+                __m256i r = _mm256_sub_epi16(
+                    _mm256_sub_epi16(t, _mm256_srli_epi16(vcin, 15)),
+                    _mm256_andnot_si256(vcout, vbase));
+                _mm256_storeu_si256(reinterpret_cast<__m256i *>(out.ptr + i), r);
             }
+            Limb bw = static_cast<Limb>(borrow);
             // 标量尾部 (8 路展开)
             for (; i + 7 < in2.size; i += 8)
             {
-                out[i]   = sub_half<Limb>(in1[i],   in2[i]   + borrow, BASE, borrow);
-                out[i+1] = sub_half<Limb>(in1[i+1], in2[i+1] + borrow, BASE, borrow);
-                out[i+2] = sub_half<Limb>(in1[i+2], in2[i+2] + borrow, BASE, borrow);
-                out[i+3] = sub_half<Limb>(in1[i+3], in2[i+3] + borrow, BASE, borrow);
-                out[i+4] = sub_half<Limb>(in1[i+4], in2[i+4] + borrow, BASE, borrow);
-                out[i+5] = sub_half<Limb>(in1[i+5], in2[i+5] + borrow, BASE, borrow);
-                out[i+6] = sub_half<Limb>(in1[i+6], in2[i+6] + borrow, BASE, borrow);
-                out[i+7] = sub_half<Limb>(in1[i+7], in2[i+7] + borrow, BASE, borrow);
+                out[i]   = sub_half<Limb>(in1[i],   in2[i]   + bw, BASE, bw);
+                out[i+1] = sub_half<Limb>(in1[i+1], in2[i+1] + bw, BASE, bw);
+                out[i+2] = sub_half<Limb>(in1[i+2], in2[i+2] + bw, BASE, bw);
+                out[i+3] = sub_half<Limb>(in1[i+3], in2[i+3] + bw, BASE, bw);
+                out[i+4] = sub_half<Limb>(in1[i+4], in2[i+4] + bw, BASE, bw);
+                out[i+5] = sub_half<Limb>(in1[i+5], in2[i+5] + bw, BASE, bw);
+                out[i+6] = sub_half<Limb>(in1[i+6], in2[i+6] + bw, BASE, bw);
+                out[i+7] = sub_half<Limb>(in1[i+7], in2[i+7] + bw, BASE, bw);
             }
             for (; i < in2.size; i++)
             {
-                out[i] = sub_half<Limb>(in1[i], in2[i] + borrow, BASE, borrow);
+                out[i] = sub_half<Limb>(in1[i], in2[i] + bw, BASE, bw);
+            }
+            // 高位残段: 无借位时直接搬运 (原地时连搬运都省)
+            if (bw == 0)
+            {
+                if (out.ptr != in1.ptr && i < in1.size)
+                    std::memcpy(out.ptr + i, in1.ptr + i, (in1.size - i) * sizeof(Limb));
+                return false;
             }
             for (; i < in1.size; i++)
             {
-                out[i] = sub_half<Limb>(in1[i], borrow, BASE, borrow);
+                out[i] = sub_half<Limb>(in1[i], bw, BASE, bw);
+                if (bw == 0)
+                {
+                    i++;
+                    if (out.ptr != in1.ptr && i < in1.size)
+                        std::memcpy(out.ptr + i, in1.ptr + i, (in1.size - i) * sizeof(Limb));
+                    return false;
+                }
             }
-            return borrow;
+            return bw;
         }
 #pragma GCC pop_options
         static bool absAdd(View in1, View in2, Span out)
@@ -1954,85 +3603,121 @@ namespace hint
             }
             
             
+            // D37: 内层改用向量化 mul_1 / addmul_1。
+            // buf 被逐行完整覆写 (行 0 写 [0,n2], 行 i 写 [i,i+n2]), 覆盖
+            // [0, n1+n2-1] 全域, 故 resize -> reserve (省 memset) 安全。
             thread_local std::vector<Limb> buf;
             size_t buf_size = in1.size + in2.size;
-            if (buf.size() < buf_size)
-                buf.resize(buf_size);
-            Limb carry = 0, x = in1[0];
-            for (size_t j = 0; j < in2.size; j++)
-            {
-                Limb2 prod = Limb2(in2[j]) * x + carry;
-                buf[j] = prod % BASE;
-                carry = prod / BASE;
-            }
-            buf[in2.size] = carry;
+            if (buf.capacity() < buf_size)
+                buf.reserve(buf_size);
+            Limb *bp = buf.data();
+            // 第 0 行: 纯 mul_1, 直接复用 D19 已向量化的 absMul1
+            bp[in2.size] = absMul1(in2, in1[0], Span(bp, in2.size));
+            // 其余各行: addmul_1
             for (size_t i = 1; i < in1.size; i++)
             {
-                x = in1[i], carry = 0;
-                for (size_t j = 0; j < in2.size; j++)
-                {
-                    Limb2 prod = Limb2(in2[j]) * x + carry + buf[i + j];
-                    buf[i + j] = prod % BASE;
-                    carry = prod / BASE;
-                }
-                buf[i + in2.size] = carry;
+                bp[i + in2.size] = absAddMul1(in2, in1[i], Span(bp + i, in2.size));
             }
-            std::copy(buf.begin(), buf.begin() + buf_size, out.begin());
+            std::copy_n(bp, buf_size, out.begin());
         }
-        static void fftMul(View in1, View in2, Span out)
+        // ================= D39: 分段并行进位传播 =================
+        // 原写法是一条串行链: s_i = carry_{i-1} + round(v[i]); carry_i = s_i / BASE。
+        // 每步含一次 128 位乘 (divBASE), 依赖延迟 ~5-6 cycle, 8-way 展开也打不破,
+        // 整条链是 latency-bound。
+        //
+        // 这里把 [0,n) 均分 4 段, 每段以 carry_in = 0 独立传播 -> 4 条互不依赖的
+        // 链交错发射, 吞吐提升到接近 4x; 段末残留进位 c0/c1/c2 再逐个涟漪进下一段。
+        //
+        // 正确性: 记 X = sum_i round(v[i]) * BASE^i。串行链输出的是 X 的低 n 位
+        // base-BASE 表示 + 溢出进位。分段版对第 k 段算出 X_k 的低 seg 位与进位 c_k,
+        // 由于 X = sum_k X_k * BASE^(k*seg) + tail, 把 c_k 加回位置 (k+1)*seg 即还原;
+        // 且必须按 低->高 顺序注入 (c0 涟漪出段1 的溢出要并入 c1 再进段2), 下方即如此。
+        // c_k <= s_max / BASE ~ 1.1e8, 涟漪 while 3 步内即归零 (out[p] < BASE),
+        // 最坏 (全 BASE-1) 才穿段, 代码也已正确处理。
+        static uint64_t carryPropSeg(const double *v, Limb *out, size_t n)
         {
-            size_t len1 = count_true_length(in1.ptr, in1.size);
-            size_t len2 = count_true_length(in2.ptr, in2.size);
-            if (len1 == 0 || len2 == 0)
-            {
-                std::fill_n(out.ptr, out.size, Limb(0));
-                return;
-            }
-            size_t conv_len = len1 + len2 - 1, float_len = int_ceil2(conv_len);
-            HINT_ASSUME(is_2pow(float_len));
-            HINT_ASSUME(float_len >= conv_len);
-            
-            thread_local AlignedVec32<double> tv1, tv2;
-            if (tv1.size() < float_len)
-                tv1.resize(float_len);
-            if (tv2.size() < float_len)
-                tv2.resize(float_len);
-            double *v1 = tv1.data(), *v2 = tv2.data();
-            copyU16ToF64AndFill(in1.ptr, v1, len1, float_len);
-            copyU16ToF64AndFill(in2.ptr, v2, len2, float_len);
-#ifdef PROFILE_MUL
-            auto _t_fft0 = std::chrono::high_resolution_clock::now();
-#endif
-            transform::fft::real_conv(v1, v2, float_len);
-#ifdef PROFILE_MUL
-            auto _t_carry0 = std::chrono::high_resolution_clock::now();
-#endif
+            constexpr size_t MIN_PAR = 2048;   // 小规模并行化不划算, 走原串行路径
             uint64_t carry = 0;
             size_t i = 0;
-            for (; i + 7 < conv_len; i += 8)
+            if (n >= MIN_PAR)
             {
-                // __builtin_prefetch: v1[] can be 4MB (500k MUL), exceeds L2 (1MB/core).
-                //   Prefetch 2 batches ahead (128 bytes) to overlap L3 latency (~40 cycles)
-                //   with carry chain serial dependency (~24 cycles per 8× iteration).
-                HINT_PREFETCH(v1 + i + 16, 0, 0);
-                HINT_PREFETCH(v1 + i + 24, 0, 0);
-                // Barrett: q=divBASE(s); out=s-q*BASE; next_s=q+v[i+1]
-                // was: s1 = s0 / BASE + ...; out[i] = s0 % BASE; carry = s7 / BASE;
-                uint64_t s0 = carry + uint64_t(v1[i]   + 0.5);
+                const size_t seg = (n >> 2) & ~size_t(7);
+                const size_t b1 = seg, b2 = seg * 2, b3 = seg * 3;
+                uint64_t c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+                for (size_t k = 0; k < seg; ++k)
+                {
+                    // D44: 删除手工预取。4 条流均为顺序步进, 硬件 L2 stream
+                    // prefetcher 已覆盖; 而条件预取块每轮固定付 test+jne, 且 4 个
+                    // 预取地址常驻抬高寄存器压力, 逼 GCC 每轮把 q0..q3 溢出到栈。
+                    uint64_t s0 = c0 + cvtRoundU64(v + k);
+                    uint64_t s1 = c1 + cvtRoundU64(v + b1 + k);
+                    uint64_t s2 = c2 + cvtRoundU64(v + b2 + k);
+                    uint64_t s3 = c3 + cvtRoundU64(v + b3 + k);
+                    uint64_t q0 = divBASE(s0);
+                    uint64_t q1 = divBASE(s1);
+                    uint64_t q2 = divBASE(s2);
+                    uint64_t q3 = divBASE(s3);
+                    out[k]      = Limb(s0 - q0 * BASE);
+                    out[b1 + k] = Limb(s1 - q1 * BASE);
+                    out[b2 + k] = Limb(s2 - q2 * BASE);
+                    out[b3 + k] = Limb(s3 - q3 * BASE);
+                    c0 = q0; c1 = q1; c2 = q2; c3 = q3;
+                }
+                // 尾部 [4*seg, n) 紧接段 3, 用 c3 继续串行
+                carry = c3;
+                for (i = b3 + seg; i < n; ++i)
+                {
+                    carry += cvtRoundU64(v + i);
+                    uint64_t q = divBASE(carry);
+                    out[i] = Limb(carry - q * BASE);
+                    carry = q;
+                }
+                // 段边界涟漪 (低 -> 高)
+                uint64_t ov = c0;
+                for (size_t p = b1; ov > 0 && p < b2; ++p)
+                {
+                    uint64_t s = uint64_t(out[p]) + ov;
+                    uint64_t q = divBASE(s);
+                    out[p] = Limb(s - q * BASE);
+                    ov = q;
+                }
+                ov += c1;
+                for (size_t p = b2; ov > 0 && p < b3; ++p)
+                {
+                    uint64_t s = uint64_t(out[p]) + ov;
+                    uint64_t q = divBASE(s);
+                    out[p] = Limb(s - q * BASE);
+                    ov = q;
+                }
+                ov += c2;
+                for (size_t p = b3; ov > 0 && p < n; ++p)
+                {
+                    uint64_t s = uint64_t(out[p]) + ov;
+                    uint64_t q = divBASE(s);
+                    out[p] = Limb(s - q * BASE);
+                    ov = q;
+                }
+                return carry + ov;
+            }
+            for (; i + 7 < n; i += 8)
+            {
+                HINT_PREFETCH(v + i + 16, 0, 0);
+                HINT_PREFETCH(v + i + 24, 0, 0);
+                uint64_t s0 = carry + cvtRoundU64(v + i);
                 uint64_t q0 = divBASE(s0);
-                uint64_t s1 = q0 + uint64_t(v1[i+1] + 0.5);
+                uint64_t s1 = q0 + cvtRoundU64(v + i + 1);
                 uint64_t q1 = divBASE(s1);
-                uint64_t s2 = q1 + uint64_t(v1[i+2] + 0.5);
+                uint64_t s2 = q1 + cvtRoundU64(v + i + 2);
                 uint64_t q2 = divBASE(s2);
-                uint64_t s3 = q2 + uint64_t(v1[i+3] + 0.5);
+                uint64_t s3 = q2 + cvtRoundU64(v + i + 3);
                 uint64_t q3 = divBASE(s3);
-                uint64_t s4 = q3 + uint64_t(v1[i+4] + 0.5);
+                uint64_t s4 = q3 + cvtRoundU64(v + i + 4);
                 uint64_t q4 = divBASE(s4);
-                uint64_t s5 = q4 + uint64_t(v1[i+5] + 0.5);
+                uint64_t s5 = q4 + cvtRoundU64(v + i + 5);
                 uint64_t q5 = divBASE(s5);
-                uint64_t s6 = q5 + uint64_t(v1[i+6] + 0.5);
+                uint64_t s6 = q5 + cvtRoundU64(v + i + 6);
                 uint64_t q6 = divBASE(s6);
-                uint64_t s7 = q6 + uint64_t(v1[i+7] + 0.5);
+                uint64_t s7 = q6 + cvtRoundU64(v + i + 7);
                 uint64_t q7 = divBASE(s7);
                 out[i]   = Limb(s0 - q0 * BASE);
                 out[i+1] = Limb(s1 - q1 * BASE);
@@ -2044,13 +3729,41 @@ namespace hint
                 out[i+7] = Limb(s7 - q7 * BASE);
                 carry = q7;
             }
-            for (; i < conv_len; i++)
+            for (; i < n; ++i)
             {
-                carry += uint64_t(v1[i] + 0.5);
+                carry += cvtRoundU64(v + i);
                 uint64_t q = divBASE(carry);
                 out[i] = Limb(carry - q * BASE);
                 carry = q;
             }
+            return carry;
+        }
+        static void fftMul(View in1, View in2, Span out)
+        {
+            size_t len1 = count_true_length(in1.ptr, in1.size);
+            size_t len2 = count_true_length(in2.ptr, in2.size);
+            if (len1 == 0 || len2 == 0)
+            {
+                std::fill_n(out.ptr, out.size, Limb(0));
+                return;
+            }
+            size_t conv_len = len1 + len2 - 1, float_len = fft_ceil_lin(conv_len);
+            HINT_ASSUME(float_len >= conv_len);
+            
+            thread_local AlignedVec32<double> tv1, tv2;
+            if (tv1.capacity() < float_len) tv1.reserve(float_len);
+            if (tv2.capacity() < float_len) tv2.reserve(float_len);
+            double *v1 = tv1.data(), *v2 = tv2.data();
+            copyU16ToF64AndFill(in1.ptr, v1, len1, float_len);
+            copyU16ToF64AndFill(in2.ptr, v2, len2, float_len);
+#ifdef PROFILE_MUL
+            auto _t_fft0 = std::chrono::high_resolution_clock::now();
+#endif
+            transform::fft::real_conv(v1, v2, float_len);
+#ifdef PROFILE_MUL
+            auto _t_carry0 = std::chrono::high_resolution_clock::now();
+#endif
+            uint64_t carry = carryPropSeg(v1, out.ptr, conv_len);
             out[conv_len] = Limb(carry);
 
             if (out.size > conv_len + 1)
@@ -2072,58 +3785,15 @@ namespace hint
                 std::fill_n(out.ptr, out.size, Limb(0));
                 return;
             }
-            size_t conv_len = len * 2 - 1, float_len = int_ceil2(conv_len);
-            HINT_ASSUME(is_2pow(float_len));
+            size_t conv_len = len * 2 - 1, float_len = fft_ceil_lin(conv_len);
             HINT_ASSUME(float_len >= conv_len);
             
             thread_local AlignedVec32<double> tv;
-            if (tv.size() < float_len)
-                tv.resize(float_len);
+            if (tv.capacity() < float_len) tv.reserve(float_len);
             double *v = tv.data();
             copyU16ToF64AndFill(in.ptr, v, len, float_len);
             transform::fft::real_conv(v, v, float_len);
-            uint64_t carry = 0;
-            size_t i = 0;
-            for (; i + 7 < conv_len; i += 8)
-            {
-                // __builtin_prefetch: overlap L3 latency with carry chain computation
-                HINT_PREFETCH(v + i + 16, 0, 0);
-                HINT_PREFETCH(v + i + 24, 0, 0);
-                // Barrett: q=divBASE(s); out=s-q*BASE; next_s=q+v[i+1]
-                // was: s1 = s0 / BASE + ...; out[i] = s0 % BASE; carry = s7 / BASE;
-                uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
-                uint64_t q0 = divBASE(s0);
-                uint64_t s1 = q0 + uint64_t(v[i+1] + 0.5);
-                uint64_t q1 = divBASE(s1);
-                uint64_t s2 = q1 + uint64_t(v[i+2] + 0.5);
-                uint64_t q2 = divBASE(s2);
-                uint64_t s3 = q2 + uint64_t(v[i+3] + 0.5);
-                uint64_t q3 = divBASE(s3);
-                uint64_t s4 = q3 + uint64_t(v[i+4] + 0.5);
-                uint64_t q4 = divBASE(s4);
-                uint64_t s5 = q4 + uint64_t(v[i+5] + 0.5);
-                uint64_t q5 = divBASE(s5);
-                uint64_t s6 = q5 + uint64_t(v[i+6] + 0.5);
-                uint64_t q6 = divBASE(s6);
-                uint64_t s7 = q6 + uint64_t(v[i+7] + 0.5);
-                uint64_t q7 = divBASE(s7);
-                out[i]   = Limb(s0 - q0 * BASE);
-                out[i+1] = Limb(s1 - q1 * BASE);
-                out[i+2] = Limb(s2 - q2 * BASE);
-                out[i+3] = Limb(s3 - q3 * BASE);
-                out[i+4] = Limb(s4 - q4 * BASE);
-                out[i+5] = Limb(s5 - q5 * BASE);
-                out[i+6] = Limb(s6 - q6 * BASE);
-                out[i+7] = Limb(s7 - q7 * BASE);
-                carry = q7;
-            }
-            for (; i < conv_len; i++)
-            {
-                carry += uint64_t(v[i] + 0.5);
-                uint64_t q = divBASE(carry);
-                out[i] = Limb(carry - q * BASE);
-                carry = q;
-            }
+            uint64_t carry = carryPropSeg(v, out.ptr, conv_len);
             out[conv_len] = Limb(carry);
 
             if (out.size > conv_len + 1)
@@ -2144,10 +3814,21 @@ namespace hint
 #ifndef FFT_MUL_UNBALANCED_RATIO
 #define FFT_MUL_UNBALANCED_RATIO 6
 #endif
+// === D36: basicMul 分发阈值 (与 absDivRem 的 Newton 路径闸门解耦) ===
+// CEILHIST 显示 bz_02 最大的 FFT 档位浪费全在 need=129..192 (65x65 limb),
+// 即"刚过阈值就被推进 192 点 FFT", 白付 ~49% N*logN。radix-5 档位够不着
+// (要求 float_len>=320), 故改由抬高 basicMul 适用区间来吃掉这块浪费。
+// 默认值与 D34 完全一致, 只有显式 -DMUL_BASIC_THRESHOLD 才改变行为。
+#ifndef MUL_BASIC_THRESHOLD
+#define MUL_BASIC_THRESHOLD FFT_MUL_THRESHOLD
+#endif
+#ifndef SQR_BASIC_THRESHOLD
+#define SQR_BASIC_THRESHOLD FFT_SQR_THRESHOLD
+#endif
         static void absSqr(View in, Span out)
         {
             assert(out.size >= in.size * 2);
-            if (in.size <= FFT_SQR_THRESHOLD)
+            if (in.size <= SQR_BASIC_THRESHOLD)
             {
                 basicMul(in, in, out);
             }
@@ -2167,22 +3848,22 @@ namespace hint
             }
             size_t chunk = small.size;
             size_t n_chunks = (len_big + chunk - 1) / chunk;
-            size_t float_len = int_ceil2(chunk + chunk - 1);
+            size_t float_len = fft_ceil_lin(chunk + chunk - 1);
             
             thread_local AlignedVec32<double> b_dft;
-            if (b_dft.size() < float_len) b_dft.resize(float_len);
+            if (b_dft.capacity() < float_len) b_dft.reserve(float_len);
             prepareDFT(small, b_dft.data(), float_len);
             
             // 保存大数数据副本（large.ptr 可能和 out.ptr 指向同一缓冲区）
             thread_local std::vector<Limb> large_copy;
-            if (large_copy.size() < len_big) large_copy.resize(len_big);
+            if (large_copy.capacity() < len_big) large_copy.reserve(len_big);
             std::copy_n(large.ptr, len_big, large_copy.data());
             
             std::fill_n(out.ptr, out.size, Limb(0));
             
             thread_local std::vector<Limb> tbuf;
             size_t tbuf_max = chunk + chunk;
-            if (tbuf.size() < tbuf_max) tbuf.resize(tbuf_max);
+            if (tbuf.capacity() < tbuf_max) tbuf.reserve(tbuf_max);
             
             for (size_t ci = 0; ci < n_chunks; ci++)
             {
@@ -2222,7 +3903,7 @@ namespace hint
                 return;
             }
             size_t sml = std::min(in1.size, in2.size);
-            if (sml <= FFT_MUL_THRESHOLD)
+            if (sml <= MUL_BASIC_THRESHOLD)
             {
                 basicMul(in1, in2, out);
             }
@@ -2246,12 +3927,10 @@ namespace hint
         
         static void prepareDFT(View in, double *dft_buf, size_t float_len)
         {
-            assert(is_2pow(float_len));
+            assert(is_2pow(float_len) || is_fft3(float_len) || is_fft5(float_len));
             assert(float_len >= in.size);
             copyU16ToF64AndFill(in.begin(), dft_buf, in.size, float_len);
-            auto &fft = transform::fft::getSharedFFT<double>();
-            fft.expand(float_len);
-            fft.template dif<true>(dft_buf, float_len);
+            transform::fft::rdif(dft_buf, float_len);
         }
         
         
@@ -2265,60 +3944,15 @@ namespace hint
             }
             size_t conv_len = a_len + b_len - 1;
             assert(float_len >= conv_len);
-            HINT_ASSUME(is_2pow(float_len));
             HINT_ASSUME(float_len >= conv_len);
             thread_local AlignedVec32<double> tv;
-            if (tv.size() < float_len)
-                tv.resize(float_len);
+            if (tv.capacity() < float_len) tv.reserve(float_len);
             double *v = tv.data();
             copyU16ToF64AndFill(a.ptr, v, a_len, float_len);
-            auto &fft = transform::fft::getSharedFFT<double>();
-            fft.expand(float_len);
-            fft.template dif<true>(v, float_len);
-            transform::fft::real_dot_binrev2(v, b_dft, float_len);
-            fft.template idit<true>(v, float_len);
-            uint64_t carry = 0;
-            size_t i = 0;
-            for (; i + 7 < conv_len; i += 8)
-            {
-                // __builtin_prefetch: overlap L3 latency with carry chain computation
-                HINT_PREFETCH(v + i + 16, 0, 0);
-                HINT_PREFETCH(v + i + 24, 0, 0);
-                // Barrett: q=divBASE(s); out=s-q*BASE; next_s=q+v[i+1]
-                // was: s1 = s0 / BASE + ...; out[i] = s0 % BASE; carry = s7 / BASE;
-                uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
-                uint64_t q0 = divBASE(s0);
-                uint64_t s1 = q0 + uint64_t(v[i+1] + 0.5);
-                uint64_t q1 = divBASE(s1);
-                uint64_t s2 = q1 + uint64_t(v[i+2] + 0.5);
-                uint64_t q2 = divBASE(s2);
-                uint64_t s3 = q2 + uint64_t(v[i+3] + 0.5);
-                uint64_t q3 = divBASE(s3);
-                uint64_t s4 = q3 + uint64_t(v[i+4] + 0.5);
-                uint64_t q4 = divBASE(s4);
-                uint64_t s5 = q4 + uint64_t(v[i+5] + 0.5);
-                uint64_t q5 = divBASE(s5);
-                uint64_t s6 = q5 + uint64_t(v[i+6] + 0.5);
-                uint64_t q6 = divBASE(s6);
-                uint64_t s7 = q6 + uint64_t(v[i+7] + 0.5);
-                uint64_t q7 = divBASE(s7);
-                out[i]   = Limb(s0 - q0 * BASE);
-                out[i+1] = Limb(s1 - q1 * BASE);
-                out[i+2] = Limb(s2 - q2 * BASE);
-                out[i+3] = Limb(s3 - q3 * BASE);
-                out[i+4] = Limb(s4 - q4 * BASE);
-                out[i+5] = Limb(s5 - q5 * BASE);
-                out[i+6] = Limb(s6 - q6 * BASE);
-                out[i+7] = Limb(s7 - q7 * BASE);
-                carry = q7;
-            }
-            for (; i < conv_len; i++)
-            {
-                carry += uint64_t(v[i] + 0.5);
-                uint64_t q = divBASE(carry);
-                out[i] = Limb(carry - q * BASE);
-                carry = q;
-            }
+            transform::fft::rdif(v, float_len);
+            transform::fft::rdot(v, b_dft, float_len);
+            transform::fft::ridit(v, float_len);
+            uint64_t carry = carryPropSeg(v, out.ptr, conv_len);
             out[conv_len] = Limb(carry);
 
             if (out.size > conv_len + 1)
@@ -2328,12 +3962,14 @@ namespace hint
         }
 
         // fftMulModBm1: 计算 a * b mod (B^m - 1), 结果长度 m (cyclic convolution)
-        // m 必须是 2 的幂, 且 a_len <= m, b_len <= m
+        // m 必须是合法 FFT 长度 (2^k 或 3*2^k), 且 a_len <= m, b_len <= m
+        //   模数 B^m-1 只要求 m 落在调用方的整数区间内, 对 m 的因子分解无要求;
+        //   放开 3*2^k 后 mn=fft_ceil(k+1) 最坏 1.5k (原 int_ceil2 最坏 2k) -> cyclic 死区消失.
         // 用途: absInvNewton GMP 风格两步分解, FFT 长度从 ceil2(2m-1) 降到 m
         // 算法: cyclic FFT (float_len=m) + 进位传播 + cyclic carry 折叠 (B^m ≡ 1 mod B^m-1)
         static void fftMulModBm1(View a, View b, size_t m, Span out)
         {
-            assert(is_2pow(m));
+            assert(is_2pow(m) || is_fft3(m) || is_fft5(m));
             assert(out.size >= m);
             size_t a_len = count_true_length(a.ptr, a.size);
             size_t b_len = count_true_length(b.ptr, b.size);
@@ -2347,59 +3983,20 @@ namespace hint
             assert(a_len <= m && b_len <= m);
 
             thread_local AlignedVec32<double> tv;
-            if (tv.size() < 2 * m)
-                tv.resize(2 * m);
+            if (tv.capacity() < 2 * m) tv.reserve(2 * m);
             double *va = tv.data();
             double *vb = tv.data() + m;
 
             copyU16ToF64AndFill(a.ptr, va, a_len, m);
             copyU16ToF64AndFill(b.ptr, vb, b_len, m);
 
-            auto &fft = transform::fft::getSharedFFT<double>();
-            fft.expand(m);
-            fft.template dif<true>(va, m);
-            fft.template dif<true>(vb, m);
-            transform::fft::real_dot_binrev2(va, vb, m);
-            fft.template idit<true>(va, m);
+            transform::fft::rdif(va, m);
+            transform::fft::rdif(vb, m);
+            transform::fft::rdot(va, vb, m);
+            transform::fft::ridit(va, m);
 
             // 进位传播 (8 路展开, 同 fftMulPre)
-            uint64_t carry = 0;
-            size_t i = 0;
-            for (; i + 7 < m; i += 8)
-            {
-                uint64_t s0 = carry + uint64_t(va[i]   + 0.5);
-                uint64_t q0 = divBASE(s0);
-                uint64_t s1 = q0 + uint64_t(va[i+1] + 0.5);
-                uint64_t q1 = divBASE(s1);
-                uint64_t s2 = q1 + uint64_t(va[i+2] + 0.5);
-                uint64_t q2 = divBASE(s2);
-                uint64_t s3 = q2 + uint64_t(va[i+3] + 0.5);
-                uint64_t q3 = divBASE(s3);
-                uint64_t s4 = q3 + uint64_t(va[i+4] + 0.5);
-                uint64_t q4 = divBASE(s4);
-                uint64_t s5 = q4 + uint64_t(va[i+5] + 0.5);
-                uint64_t q5 = divBASE(s5);
-                uint64_t s6 = q5 + uint64_t(va[i+6] + 0.5);
-                uint64_t q6 = divBASE(s6);
-                uint64_t s7 = q6 + uint64_t(va[i+7] + 0.5);
-                uint64_t q7 = divBASE(s7);
-                out[i]   = Limb(s0 - q0 * BASE);
-                out[i+1] = Limb(s1 - q1 * BASE);
-                out[i+2] = Limb(s2 - q2 * BASE);
-                out[i+3] = Limb(s3 - q3 * BASE);
-                out[i+4] = Limb(s4 - q4 * BASE);
-                out[i+5] = Limb(s5 - q5 * BASE);
-                out[i+6] = Limb(s6 - q6 * BASE);
-                out[i+7] = Limb(s7 - q7 * BASE);
-                carry = q7;
-            }
-            for (; i < m; i++)
-            {
-                carry += uint64_t(va[i] + 0.5);
-                uint64_t q = divBASE(carry);
-                out[i] = Limb(carry - q * BASE);
-                carry = q;
-            }
+            uint64_t carry = carryPropSeg(va, out.ptr, m);
 
             // cyclic 折叠: B^m ≡ 1 (mod B^m-1), 所以 out_final = (out + carry) mod (B^m-1)
             // 进位传播 carry 到 out, 最多绕 1 圈 (carry 衰减极快)
@@ -2446,7 +4043,7 @@ namespace hint
         // b_dft 长度 = m, 由 prepareDFT(b, b_dft, m) 预计算
         static void fftMulModBm1Pre(View a, const double *b_dft, size_t b_len, size_t m, Span out)
         {
-            assert(is_2pow(m));
+            assert(is_2pow(m) || is_fft3(m) || is_fft5(m));
             assert(out.size >= m);
             size_t a_len = count_true_length(a.ptr, a.size);
             if (a_len == 0)
@@ -2459,59 +4056,17 @@ namespace hint
             assert(a_len <= m);
 
             thread_local AlignedVec32<double> tv;
-            if (tv.size() < m)
-                tv.resize(m);
+            if (tv.capacity() < m) tv.reserve(m);
             double *v = tv.data();
 
             copyU16ToF64AndFill(a.ptr, v, a_len, m);
 
-            auto &fft = transform::fft::getSharedFFT<double>();
-            fft.expand(m);
-            fft.template dif<true>(v, m);
-            transform::fft::real_dot_binrev2(v, b_dft, m);
-            fft.template idit<true>(v, m);
+            transform::fft::rdif(v, m);
+            transform::fft::rdot(v, b_dft, m);
+            transform::fft::ridit(v, m);
 
             // 进位传播 (cyclic mod B^m-1) — 同 fftMulModBm1
-            uint64_t carry = 0;
-            size_t i = 0;
-            for (; i + 7 < m; i += 8)
-            {
-                // __builtin_prefetch: overlap L3 latency with carry chain computation
-                HINT_PREFETCH(v + i + 16, 0, 0);
-                HINT_PREFETCH(v + i + 24, 0, 0);
-                uint64_t s0 = carry + uint64_t(v[i]   + 0.5);
-                uint64_t q0 = divBASE(s0);
-                uint64_t s1 = q0 + uint64_t(v[i+1] + 0.5);
-                uint64_t q1 = divBASE(s1);
-                uint64_t s2 = q1 + uint64_t(v[i+2] + 0.5);
-                uint64_t q2 = divBASE(s2);
-                uint64_t s3 = q2 + uint64_t(v[i+3] + 0.5);
-                uint64_t q3 = divBASE(s3);
-                uint64_t s4 = q3 + uint64_t(v[i+4] + 0.5);
-                uint64_t q4 = divBASE(s4);
-                uint64_t s5 = q4 + uint64_t(v[i+5] + 0.5);
-                uint64_t q5 = divBASE(s5);
-                uint64_t s6 = q5 + uint64_t(v[i+6] + 0.5);
-                uint64_t q6 = divBASE(s6);
-                uint64_t s7 = q6 + uint64_t(v[i+7] + 0.5);
-                uint64_t q7 = divBASE(s7);
-                out[i]   = Limb(s0 - q0 * BASE);
-                out[i+1] = Limb(s1 - q1 * BASE);
-                out[i+2] = Limb(s2 - q2 * BASE);
-                out[i+3] = Limb(s3 - q3 * BASE);
-                out[i+4] = Limb(s4 - q4 * BASE);
-                out[i+5] = Limb(s5 - q5 * BASE);
-                out[i+6] = Limb(s6 - q6 * BASE);
-                out[i+7] = Limb(s7 - q7 * BASE);
-                carry = q7;
-            }
-            for (; i < m; i++)
-            {
-                carry += uint64_t(v[i] + 0.5);
-                uint64_t q = divBASE(carry);
-                out[i] = Limb(carry - q * BASE);
-                carry = q;
-            }
+            uint64_t carry = carryPropSeg(v, out.ptr, m);
             while (carry > 0)
             {
                 bool wrapped = true;
@@ -2550,10 +4105,90 @@ namespace hint
             this->removeLeadingZero();
             return *this;
         }
+        // === D19: SWAR 进位链 absMul1 (single-limb multiply) ===
+        // 原版是纯标量进位链: 每 limb 一次 imul + 两次 magic 除法 (~26 Ir/limb),
+        // 在 lri_03 的归一化路径 (dividend/divisor 各乘 factor, 共 50 万 limb)
+        // 折算 13.0M Ir, 是画像里最大的 100% 标量块。
+        //
+        // 拆解串行依赖:  prod[i] = p[i] + carry[i],  p[i] = in[i]*x  (< BASE^2, 无依赖)
+        //   记 p[i] = q[i]*BASE + r[i], 则
+        //     out[i]     = (r[i] + carry[i]) mod BASE
+        //     carry[i+1] = q[i] + [r[i] + carry[i] >= BASE]
+        //   由 q[i] <= BASE-2 保证 carry[i] <= BASE-1, 故 r[i]+carry[i] < 2*BASE,
+        //   涟漪进位至多 1 —— 于是 t[i] = r[i] + q[i-1] 可整体向量化,
+        //   只剩下这条至多-1 的涟漪链, 用 D11 的 SWAR 一次算完 16 limb:
+        //     G = (t >= BASE) 生成, P = (t == BASE-1) 传播 (二者互斥),
+        //     s = G + (G|P) + cin,  cin_bits = s ^ G ^ (G|P),  cout = cin_bits >> 1
         static Limb absMul1(View in, Limb x, Span out)
         {
-            Limb carry = 0;
-            for (size_t i = 0; i < in.size; i++)
+            static_assert(sizeof(Limb) == 2 && BASE == 10000,
+                          "absMul1 AVX2 path assumes uint16 limbs in base 1e4");
+            size_t i = 0;
+            uint32_t carry_q = 0;   // 上一 limb 的高位 q
+            uint32_t carry_rip = 0; // 上一 limb 的涟漪进位
+            if (in.size >= 16)
+            {
+                const __m256i vx = _mm256_set1_epi32(int(uint32_t(x)));
+                const __m256i vmagic = _mm256_set1_epi32(109951163); // ceil(2^40 / 1e4)
+                const __m256i vbase32 = _mm256_set1_epi32(int(BASE));
+                const __m256i vbase16 = _mm256_set1_epi16(short(BASE));
+                const __m256i vbm1 = _mm256_set1_epi16(short(BASE - 1));
+                const __m256i vbit = _mm256_setr_epi16(
+                    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+                    short(16384), short(32768));
+                for (; i + 15 < in.size; i += 16)
+                {
+                    __m256i a16 = _mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(in.ptr + i));
+                    __m256i a0 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(a16));
+                    __m256i a1 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(a16, 1));
+                    // p < (BASE-1)^2 < 1e8, 32 位无溢出
+                    __m256i p0 = _mm256_mullo_epi32(a0, vx);
+                    __m256i p1 = _mm256_mullo_epi32(a1, vx);
+                    // q = floor(p * ceil(2^40/BASE) / 2^40) —— 对 p < 1e8 精确
+                    auto divb = [&](__m256i p) -> __m256i
+                    {
+                        __m256i ev = _mm256_mul_epu32(p, vmagic);
+                        __m256i od = _mm256_mul_epu32(_mm256_srli_epi64(p, 32), vmagic);
+                        ev = _mm256_srli_epi64(ev, 40);
+                        od = _mm256_srli_epi64(od, 40);
+                        return _mm256_blend_epi32(ev, _mm256_slli_epi64(od, 32), 0xAA);
+                    };
+                    __m256i q0 = divb(p0), q1 = divb(p1);
+                    __m256i r0 = _mm256_sub_epi32(p0, _mm256_mullo_epi32(q0, vbase32));
+                    __m256i r1 = _mm256_sub_epi32(p1, _mm256_mullo_epi32(q1, vbase32));
+                    // 32 -> 16 位打包 (q, r 均在 [0, BASE), 不会饱和)
+                    __m256i q16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(q0, q1), 0xD8);
+                    __m256i r16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(r0, r1), 0xD8);
+                    // qsh[j] = q[j-1], 最低位填入上一块残留的 carry_q
+                    __m256i qsh = _mm256_alignr_epi8(
+                        q16, _mm256_permute2x128_si256(q16, q16, 0x08), 14);
+                    qsh = _mm256_insert_epi16(qsh, int(carry_q), 0);
+                    carry_q = uint32_t(uint16_t(_mm256_extract_epi16(q16, 15)));
+                    __m256i t = _mm256_add_epi16(r16, qsh); // < 2*BASE < 32768
+                    __m256i gm = _mm256_cmpgt_epi16(t, vbm1); // t >= BASE
+                    __m256i pm = _mm256_cmpeq_epi16(t, vbm1); // t == BASE-1
+                    uint32_t G = _pext_u32(uint32_t(_mm256_movemask_epi8(gm)), 0x55555555u);
+                    uint32_t P = _pext_u32(uint32_t(_mm256_movemask_epi8(pm)), 0x55555555u);
+                    uint32_t A = G, B = G | P;
+                    uint32_t sw = A + B + carry_rip;
+                    uint32_t cin = sw ^ A ^ B; // bit j = 进入 limb j 的进位
+                    uint32_t cout = cin >> 1;  // bit j = limb j 的进位输出
+                    carry_rip = (sw >> 16) & 1u;
+                    __m256i vcin = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cin)), vbit), vbit);
+                    __m256i vcout = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cout)), vbit), vbit);
+                    __m256i res = _mm256_sub_epi16(
+                        _mm256_add_epi16(t, _mm256_srli_epi16(vcin, 15)),
+                        _mm256_and_si256(vcout, vbase16));
+                    _mm256_storeu_si256(reinterpret_cast<__m256i *>(out.ptr + i), res);
+                }
+            }
+            Limb carry = Limb(carry_q + carry_rip);
+            for (; i < in.size; i++)
             {
                 Limb2 prod = Limb2(in[i]) * x + carry;
                 out[i] = prod % BASE;
@@ -2561,6 +4196,336 @@ namespace hint
             }
             return carry;
         }
+        // === D37: SWAR/AVX2 addmul_1  ——  acc[] += in[] * x, 返回进位 ===
+        // basicMul 的内层原本 100% 标量 (bz_02 #1 热点 14.27%, rnz_01 #3 12.83%),
+        // 每 limb ~11 Ir 且带串行进位链。本函数按与 D19 absMul1 同样的思路拆解,
+        // 但多一路累加数 acc:
+        //   p[j] = in[j]*x < BASE^2                       (无依赖, 8 路 32 位)
+        //   q[j] = p/BASE, r[j] = p%BASE                  (magic 乘法倒数)
+        //   t[j] = r[j] + q[j-1] + acc[j] <= 3*BASE-3 = 29997 < 32768  (16 位安全)
+        //   g[j] = floor(t/BASE) in {0,1,2},  m[j] = t - g*BASE in [0,BASE)
+        // 真值递推:
+        //   out[j] = (m[j] + d[j]) mod BASE,  d[j+1] = g[j] + [m[j]+d[j] >= BASE]
+        // ★ [m+d >= BASE] 需要 m 顶到 BASE-1/BASE-2, 概率 ~1.4e-4 =>
+        //   快路径令该项恒 0, 于是 d[j] = g[j-1] —— 进位退化成"g 右移一格",
+        //   完全消除串行链; 再用一次 vptest 检测是否真有 u >= BASE
+        //   (命中率 ~0.2%/块), 命中则该块退标量重算, 逐字节等价。
+        // 块间用完整标量 carry (= q[15] + g[15] <= BASE-1) 插进下一块 qsh[0]。
+        static Limb absAddMul1(View in, Limb x, Span acc)
+        {
+            static_assert(sizeof(Limb) == 2 && BASE == 10000,
+                          "absAddMul1 AVX2 path assumes uint16 limbs in base 1e4");
+            size_t i = 0;
+            uint32_t carry = 0; // 进入 limb i 的完整进位, <= BASE-1
+            if (in.size >= 16)
+            {
+                const __m256i vx = _mm256_set1_epi32(int(uint32_t(x)));
+                const __m256i vmagic = _mm256_set1_epi32(109951163); // ceil(2^40 / 1e4)
+                const __m256i vbase32 = _mm256_set1_epi32(int(BASE));
+                const __m256i vbase16 = _mm256_set1_epi16(short(BASE));
+                const __m256i vbm1 = _mm256_set1_epi16(short(BASE - 1));
+                const __m256i v2bm1 = _mm256_set1_epi16(short(2 * BASE - 1));
+                const __m256i vzero = _mm256_setzero_si256();
+                for (; i + 15 < in.size; i += 16)
+                {
+                    __m256i a16 = _mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(in.ptr + i));
+                    __m256i a0 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(a16));
+                    __m256i a1 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(a16, 1));
+                    __m256i p0 = _mm256_mullo_epi32(a0, vx); // p < 1e8, 32 位无溢出
+                    __m256i p1 = _mm256_mullo_epi32(a1, vx);
+                    auto divb = [&](__m256i p) -> __m256i
+                    {
+                        __m256i ev = _mm256_mul_epu32(p, vmagic);
+                        __m256i od = _mm256_mul_epu32(_mm256_srli_epi64(p, 32), vmagic);
+                        ev = _mm256_srli_epi64(ev, 40);
+                        od = _mm256_srli_epi64(od, 40);
+                        return _mm256_blend_epi32(ev, _mm256_slli_epi64(od, 32), 0xAA);
+                    };
+                    __m256i q0 = divb(p0), q1 = divb(p1);
+                    __m256i r0 = _mm256_sub_epi32(p0, _mm256_mullo_epi32(q0, vbase32));
+                    __m256i r1 = _mm256_sub_epi32(p1, _mm256_mullo_epi32(q1, vbase32));
+                    __m256i q16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(q0, q1), 0xD8);
+                    __m256i r16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(r0, r1), 0xD8);
+                    // qsh[j] = q[j-1]; permute2x128(...,0x08) 把低 128 位清零,
+                    // 故 alignr 之后 qsh[0] 恒为 0 —— 可以直接 OR 进块间 carry。
+                    __m256i qsh = _mm256_alignr_epi8(
+                        q16, _mm256_permute2x128_si256(q16, q16, 0x08), 14);
+                    qsh = _mm256_or_si256(
+                        qsh, _mm256_castsi128_si256(_mm_cvtsi32_si128(int(carry))));
+                    uint32_t q_last = uint32_t(uint16_t(_mm256_extract_epi16(q16, 15)));
+                    __m256i b16 = _mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(acc.ptr + i));
+                    __m256i t = _mm256_add_epi16(_mm256_add_epi16(r16, qsh), b16);
+                    __m256i ge1 = _mm256_cmpgt_epi16(t, vbm1);  // t >= BASE
+                    __m256i ge2 = _mm256_cmpgt_epi16(t, v2bm1); // t >= 2*BASE
+                    // g = (-ge1) + (-ge2) in {0,1,2}
+                    __m256i g = _mm256_sub_epi16(_mm256_sub_epi16(vzero, ge1), ge2);
+                    __m256i m = _mm256_sub_epi16(t, _mm256_mullo_epi16(g, vbase16));
+                    // gsh[j] = g[j-1], gsh[0] = 0 (块间进位已并入 qsh[0])
+                    __m256i gsh = _mm256_alignr_epi8(
+                        g, _mm256_permute2x128_si256(g, g, 0x08), 14);
+                    __m256i u = _mm256_add_epi16(m, gsh); // <= BASE+1
+                    __m256i chk = _mm256_cmpgt_epi16(u, vbm1);
+                    if (_mm256_testz_si256(chk, chk))
+                    {
+                        uint32_t g_last =
+                            uint32_t(uint16_t(_mm256_extract_epi16(g, 15)));
+                        _mm256_storeu_si256(
+                            reinterpret_cast<__m256i *>(acc.ptr + i), u);
+                        carry = q_last + g_last; // <= BASE-1
+                    }
+                    else
+                    {
+                        // 罕见 (~0.2%/块): 本块真出现 m+d >= BASE 的涟漪, 退标量重算
+                        uint32_t c = carry;
+                        for (size_t j = i; j < i + 16; j++)
+                        {
+                            uint32_t v = uint32_t(in[j]) * uint32_t(x)
+                                       + uint32_t(acc[j]) + c;
+                            acc[j] = Limb(v % BASE);
+                            c = v / BASE;
+                        }
+                        carry = c;
+                    }
+                }
+            }
+            for (; i < in.size; i++)
+            {
+                uint32_t v = uint32_t(in[i]) * uint32_t(x) + uint32_t(acc[i]) + carry;
+                acc[i] = Limb(v % BASE);
+                carry = v / BASE;
+            }
+            return Limb(carry);
+        }
+        // ============================ D38: submul_1 ============================
+        // acc -= in * x, 就地。要求 acc.size >= in.size + 1 (顶端 limb 吸收乘法进位)。
+        // 返回 true <=> acc 原值 < in*x (即 absDivBasicCore 里 qhat 估大)。
+        //
+        // 与 "absMul1 写 tprod + absSub 读 tprod" 逐位等价, 但只遍历一次:
+        // 乘法侧算出规范化的 res (= (in*x) 的第 i..i+15 个 limb) 后直接留在 YMM 里,
+        // 立刻与 acc 做 SWAR 借位减法, tprod 的 store/load 全部消失。
+        // 两条 SWAR 链 (乘法涟漪 cin/cout, 减法借位 cin2/cout2) 都是 32 位标量,
+        // 互不干扰, 各自跨块传递 1 bit。
+        // ===================== D41: PADDED 向量尾部 =====================
+        // 模板参数 PADDED == true 时, 调用方保证 in.ptr / acc.ptr 之后各有 >=16 个
+        // limb 的**可读**空间 (absDivRem 主闸门用零填充显式保证)。此时把原本逐 limb
+        // 的标量收尾整段换成**一次带掩码的 AVX2 迭代**:
+        //   * in 侧越界 limb 用 in_mask 清零 -> 其乘积恒 0, 而 index n 处的 qsh
+        //     恰好等于 index n-1 的进位 q, 天然吸收掉原来 "acc[n] -= mcarry" 那一步;
+        //   * acc 侧只 blendv 写回 index <= n, 越界 limb 一律保持原值 (只读不写);
+        //   * 借位不再取 SWAR 链的溢出位, 改为精确抽 cin2 的 bit (rem+1) ——
+        //     SWAR 进位自低向高传播, 该 bit 只依赖 index <= n, 与越界 limb 的
+        //     内容完全无关, 故 padding 里是零还是垃圾都不影响结果 (数学等价)。
+        // 动机 (shape_div.py 剖分 r_nearly_zero_01): 标量尾部只占 16.3% 的 limb
+        // 却吃掉 37.8% 的指令 —— 除数长度集中在 62~63 / 185~186, 每次调用都要
+        // 用逐 limb 标量收拾最后 15 / 9 个 limb。消除后 absSubMul1 降约 28%。
+        //
+        // PADDED == false 时行为与 D38/D39 完全一致 (absInvNewton 基例走这条路,
+        // 它的 in 是外部传入的 View, padding 无法保证)。
+        template <bool PADDED>
+        static bool absSubMul1(Span acc, View in, Limb x)
+        {
+            static_assert(sizeof(Limb) == 2 && BASE == 10000,
+                          "absSubMul1 AVX2 path assumes uint16 limbs in base 1e4");
+            assert(acc.size >= in.size + 1);
+            const size_t n = in.size;
+            size_t i = 0;
+            uint32_t carry_q = 0;   // 乘法: 上一 limb 的高位 q
+            uint32_t carry_rip = 0; // 乘法: 上一 limb 的涟漪进位
+            uint32_t borrow = 0;    // 减法: 跨块借位
+            if (n >= 16)
+            {
+                const __m256i vx = _mm256_set1_epi32(int(uint32_t(x)));
+                const __m256i vmagic = _mm256_set1_epi32(109951163); // ceil(2^40 / 1e4)
+                const __m256i vbase32 = _mm256_set1_epi32(int(BASE));
+                const __m256i vbase16 = _mm256_set1_epi16(short(BASE));
+                const __m256i vbm1 = _mm256_set1_epi16(short(BASE - 1));
+                const __m256i vbit = _mm256_setr_epi16(
+                    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+                    short(16384), short(32768));
+                for (; i + 15 < n; i += 16)
+                {
+                    // ---- 乘法侧: res = (in*x) 的 limb i..i+15 (与 absMul1 逐位一致) ----
+                    __m256i a16 = _mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(in.ptr + i));
+                    __m256i a0 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(a16));
+                    __m256i a1 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(a16, 1));
+                    __m256i p0 = _mm256_mullo_epi32(a0, vx);
+                    __m256i p1 = _mm256_mullo_epi32(a1, vx);
+                    auto divb = [&](__m256i p) -> __m256i
+                    {
+                        __m256i ev = _mm256_mul_epu32(p, vmagic);
+                        __m256i od = _mm256_mul_epu32(_mm256_srli_epi64(p, 32), vmagic);
+                        ev = _mm256_srli_epi64(ev, 40);
+                        od = _mm256_srli_epi64(od, 40);
+                        return _mm256_blend_epi32(ev, _mm256_slli_epi64(od, 32), 0xAA);
+                    };
+                    __m256i q0 = divb(p0), q1 = divb(p1);
+                    __m256i r0 = _mm256_sub_epi32(p0, _mm256_mullo_epi32(q0, vbase32));
+                    __m256i r1 = _mm256_sub_epi32(p1, _mm256_mullo_epi32(q1, vbase32));
+                    __m256i q16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(q0, q1), 0xD8);
+                    __m256i r16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(r0, r1), 0xD8);
+                    __m256i qsh = _mm256_alignr_epi8(
+                        q16, _mm256_permute2x128_si256(q16, q16, 0x08), 14);
+                    qsh = _mm256_insert_epi16(qsh, int(carry_q), 0);
+                    carry_q = uint32_t(uint16_t(_mm256_extract_epi16(q16, 15)));
+                    __m256i t = _mm256_add_epi16(r16, qsh); // < 2*BASE < 32768
+                    __m256i gm = _mm256_cmpgt_epi16(t, vbm1);
+                    __m256i pm = _mm256_cmpeq_epi16(t, vbm1);
+                    uint32_t G = _pext_u32(uint32_t(_mm256_movemask_epi8(gm)), 0x55555555u);
+                    uint32_t P = _pext_u32(uint32_t(_mm256_movemask_epi8(pm)), 0x55555555u);
+                    uint32_t A = G, B = G | P;
+                    uint32_t sw = A + B + carry_rip;
+                    uint32_t cin = sw ^ A ^ B;
+                    uint32_t cout = cin >> 1;
+                    carry_rip = (sw >> 16) & 1u;
+                    __m256i vcin = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cin)), vbit), vbit);
+                    __m256i vcout = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cout)), vbit), vbit);
+                    __m256i res = _mm256_sub_epi16(
+                        _mm256_add_epi16(t, _mm256_srli_epi16(vcin, 15)),
+                        _mm256_and_si256(vcout, vbase16));
+                    // ---- 减法侧: acc[i..] -= res (与 absSub_avx2 逐位一致) ----
+                    __m256i av = _mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(acc.ptr + i));
+                    __m256i t2 = _mm256_sub_epi16(_mm256_add_epi16(av, vbase16), res);
+                    __m256i gm2 = _mm256_cmpgt_epi16(vbase16, t2); // acc < res
+                    __m256i pm2 = _mm256_cmpeq_epi16(t2, vbase16); // acc == res
+                    uint32_t G2 = _pext_u32(uint32_t(_mm256_movemask_epi8(gm2)), 0x55555555u);
+                    uint32_t P2 = _pext_u32(uint32_t(_mm256_movemask_epi8(pm2)), 0x55555555u);
+                    uint32_t A2 = G2, B2 = G2 | P2;
+                    uint32_t s2 = A2 + B2 + borrow;
+                    uint32_t cin2 = s2 ^ A2 ^ B2;
+                    uint32_t cout2 = cin2 >> 1;
+                    borrow = (s2 >> 16) & 1u;
+                    __m256i vcin2 = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cin2)), vbit), vbit);
+                    __m256i vcout2 = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cout2)), vbit), vbit);
+                    __m256i r2 = _mm256_sub_epi16(
+                        _mm256_sub_epi16(t2, _mm256_srli_epi16(vcin2, 15)),
+                        _mm256_andnot_si256(vcout2, vbase16));
+                    _mm256_storeu_si256(reinterpret_cast<__m256i *>(acc.ptr + i), r2);
+                }
+            }
+            // ---------------- D41: 向量化收尾 (仅 PADDED) ----------------
+            if constexpr (PADDED)
+            {
+                // n < 8 时一次 AVX2 迭代 (~84 Ir) 反而贵过标量 (~20 Ir/limb), 让给标量。
+                if (n >= 8)
+                {
+                    assert(acc.size == n + 1); // 越界 limb 只读不写, 故要求 acc 恰好 n+1
+                    const size_t rem = n - i; // 0..15, 剩余未处理的 in limb 数
+                    const __m256i vx = _mm256_set1_epi32(int(uint32_t(x)));
+                    const __m256i vmagic = _mm256_set1_epi32(109951163);
+                    const __m256i vbase32 = _mm256_set1_epi32(int(BASE));
+                    const __m256i vbase16 = _mm256_set1_epi16(short(BASE));
+                    const __m256i vbm1 = _mm256_set1_epi16(short(BASE - 1));
+                    const __m256i vbit = _mm256_setr_epi16(
+                        1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+                        short(16384), short(32768));
+                    const __m256i vidx = _mm256_setr_epi16(
+                        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+                    // in 有效 <=> idx < rem ; acc 需写回 <=> idx <= rem (idx==rem 收乘法进位)
+                    const __m256i in_mask =
+                        _mm256_cmpgt_epi16(_mm256_set1_epi16(short(rem)), vidx);
+                    const __m256i keep =
+                        _mm256_cmpgt_epi16(_mm256_set1_epi16(short(rem + 1)), vidx);
+
+                    __m256i a16 = _mm256_and_si256(
+                        _mm256_loadu_si256(reinterpret_cast<const __m256i *>(in.ptr + i)),
+                        in_mask);
+                    __m256i a0 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(a16));
+                    __m256i a1 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(a16, 1));
+                    __m256i p0 = _mm256_mullo_epi32(a0, vx);
+                    __m256i p1 = _mm256_mullo_epi32(a1, vx);
+                    auto divb = [&](__m256i p) -> __m256i
+                    {
+                        __m256i ev = _mm256_mul_epu32(p, vmagic);
+                        __m256i od = _mm256_mul_epu32(_mm256_srli_epi64(p, 32), vmagic);
+                        ev = _mm256_srli_epi64(ev, 40);
+                        od = _mm256_srli_epi64(od, 40);
+                        return _mm256_blend_epi32(ev, _mm256_slli_epi64(od, 32), 0xAA);
+                    };
+                    __m256i q0 = divb(p0), q1 = divb(p1);
+                    __m256i r0 = _mm256_sub_epi32(p0, _mm256_mullo_epi32(q0, vbase32));
+                    __m256i r1 = _mm256_sub_epi32(p1, _mm256_mullo_epi32(q1, vbase32));
+                    __m256i q16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(q0, q1), 0xD8);
+                    __m256i r16 = _mm256_permute4x64_epi64(
+                        _mm256_packus_epi32(r0, r1), 0xD8);
+                    __m256i qsh = _mm256_alignr_epi8(
+                        q16, _mm256_permute2x128_si256(q16, q16, 0x08), 14);
+                    qsh = _mm256_insert_epi16(qsh, int(carry_q), 0);
+                    __m256i t = _mm256_add_epi16(r16, qsh);
+                    __m256i gm = _mm256_cmpgt_epi16(t, vbm1);
+                    __m256i pm = _mm256_cmpeq_epi16(t, vbm1);
+                    uint32_t G = _pext_u32(uint32_t(_mm256_movemask_epi8(gm)), 0x55555555u);
+                    uint32_t P = _pext_u32(uint32_t(_mm256_movemask_epi8(pm)), 0x55555555u);
+                    uint32_t A = G, B = G | P;
+                    uint32_t sw = A + B + carry_rip;
+                    uint32_t cin = sw ^ A ^ B;
+                    uint32_t cout = cin >> 1;
+                    __m256i vcin = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cin)), vbit), vbit);
+                    __m256i vcout = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cout)), vbit), vbit);
+                    __m256i res = _mm256_sub_epi16(
+                        _mm256_add_epi16(t, _mm256_srli_epi16(vcin, 15)),
+                        _mm256_and_si256(vcout, vbase16));
+                    // ---- 减法侧 ----
+                    __m256i av = _mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(acc.ptr + i));
+                    __m256i t2 = _mm256_sub_epi16(_mm256_add_epi16(av, vbase16), res);
+                    __m256i gm2 = _mm256_cmpgt_epi16(vbase16, t2);
+                    __m256i pm2 = _mm256_cmpeq_epi16(t2, vbase16);
+                    uint32_t G2 = _pext_u32(uint32_t(_mm256_movemask_epi8(gm2)), 0x55555555u);
+                    uint32_t P2 = _pext_u32(uint32_t(_mm256_movemask_epi8(pm2)), 0x55555555u);
+                    uint32_t A2 = G2, B2 = G2 | P2;
+                    uint32_t s2 = A2 + B2 + borrow;
+                    uint32_t cin2 = s2 ^ A2 ^ B2;
+                    uint32_t cout2 = cin2 >> 1;
+                    // cin2 的 bit j = index i+j 的借入 => index n(=i+rem) 的借出 = bit rem+1。
+                    // rem==15 时即 bit16, 与旧口径 (s2>>16)&1 完全一致。
+                    borrow = (cin2 >> (rem + 1)) & 1u;
+                    __m256i vcin2 = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cin2)), vbit), vbit);
+                    __m256i vcout2 = _mm256_cmpeq_epi16(
+                        _mm256_and_si256(_mm256_set1_epi16(short(cout2)), vbit), vbit);
+                    __m256i r2 = _mm256_sub_epi16(
+                        _mm256_sub_epi16(t2, _mm256_srli_epi16(vcin2, 15)),
+                        _mm256_andnot_si256(vcout2, vbase16));
+                    _mm256_storeu_si256(reinterpret_cast<__m256i *>(acc.ptr + i),
+                                        _mm256_blendv_epi8(av, r2, keep));
+                    return borrow != 0;
+                }
+            }
+            Limb mcarry = Limb(carry_q + carry_rip);
+            Limb bw = Limb(borrow);
+            for (; i < n; i++)
+            {
+                Limb2 prod = Limb2(in[i]) * x + mcarry;
+                Limb m = Limb(prod % BASE);
+                mcarry = Limb(prod / BASE);
+                acc[i] = sub_half<Limb>(acc[i], Limb(m + bw), BASE, bw);
+            }
+            // 顶端 limb 吸收乘法进位 mcarry (<= BASE-1) 与借位 bw
+            acc[i] = sub_half<Limb>(acc[i], Limb(mcarry + bw), BASE, bw);
+            i++;
+            // 若 acc 还有更高位 (absDivBasicCore 里没有), 继续传播借位
+            for (; i < acc.size && bw; i++)
+            {
+                acc[i] = sub_half<Limb>(acc[i], bw, BASE, bw);
+            }
+            return bw != 0;
+        }
+
         static Limb absDiv1(View in, Limb x, Span out)
         {
             Limb rem = 0;
@@ -2580,6 +4545,9 @@ namespace hint
             this->removeLeadingZero();
             return rem;
         }
+        // D41: PADDED 透传给 absSubMul1。PADDED=true 要求 dividend / divisor 两侧
+        // 缓冲区尾部各有 >=16 limb 可读空间 (absDivRem 主闸门显式零填充保证)。
+        template <bool PADDED = false>
         static void absDivBasicCore(Span dividend, View divisor, Span quotient)
         {
             if (dividend.size <= divisor.size)
@@ -2591,43 +4559,72 @@ namespace hint
             Limb divisor_high = divisor[len2 - 1];
             assert(divisor_high >= HALF_BASE);
             size_t quot_idx = len1 - len2;
-            
-            thread_local std::vector<Limb> tprod;
-            if (tprod.size() < len2 + 1)
-                tprod.resize(len2 + 1);
+
+            // ================= D31: Knuth Algorithm D 步骤 D3 =================
+            // 实测 (callgrind, r_nearly_zero_01): 本函数发出 267086 次 absMul1 却发出
+            // 361815 次 absSub —— 多出的 94729 次全是 qhat 估大后的回退修正,
+            // 修正率 35.5%。规范化 (v_high >= BASE/2) 只保证 qhat <= q+2, 真正把
+            // 误差压到 "q 或 q+1 (后者概率 ~2/BASE)" 的是 Knuth 的 v[n-2] 测试,
+            // 而原实现缺了这一步。补上之后:
+            //   1) 每次迭代的全长 absCompare 彻底消失 —— 该比较在 r≈0 的用例上
+            //      要一路深扫才能定出大小, 是 absDivBasicCore 自身 11% Ir 的主因;
+            //      改由 absSub 已经免费返回的借位来判定。
+            //   2) 35.5% 概率的全长修正 absSub -> 0.02% 概率的加回 absAdd。
+            //   3) 一个几乎不可预测的分支 (35.5% 命中) -> 恒不跳转的分支。
+            //
+            // 顺带: 用 Granlund-Montgomery 乘法倒数消掉内循环里的硬件 32 位除法。
+            // divisor_high 在整个除法期间不变, 故倒数只算一次, 摊到 ~67 次迭代上。
+            //   m = floor(2^42/d) + 1, 对所有 n < 2^27 满足 floor(m*n/2^42) == n/d;
+            //   充分条件: m*d - 2^42 = d - (2^42 mod d) <= 2^(42-27) = 32768,
+            //   而 d <= BASE-1 = 9999 < 32768 恒成立 ✓
+            //   n = high = high1*BASE + high2 <= 99999999 < 2^27 = 134217728 ✓
+            //   m <= 2^42/5000 < 2^30, m*n < 2^57 < 2^64 ✓ (无溢出)
+            const uint64_t dh_magic = (uint64_t(1) << 42) / divisor_high + 1;
+            const Limb divisor_high2 = (len2 >= 2) ? divisor[len2 - 2] : Limb(0);
+
             while (quot_idx > 0)
             {
                 quot_idx--;
                 len1 = quot_idx + len2;
-                Limb high1 = dividend[len1], high2 = dividend[len1 - 1], qhat = 0;
-                
+                Limb high1 = dividend[len1], high2 = dividend[len1 - 1];
+                Limb2 high = Limb2(high1) * BASE + high2;
+                Limb2 qh;
                 if (high1 >= divisor_high)
                 {
-                    qhat = BASE - 1;
+                    qh = BASE - 1;
                 }
                 else
                 {
-                    Limb2 high = Limb2(high1) * BASE + high2;
-                    qhat = high / divisor_high;
+                    qh = Limb2((dh_magic * uint64_t(high)) >> 42);
+#ifdef DIV_D31_VERIFY
+                    assert(qh == high / divisor_high);
+#endif
                 }
-                Span prod_span(tprod.data(), len2 + 1);
-                prod_span[len2] = absMul1(divisor, qhat, prod_span);
-                if (prod_span[len2] == 0)
+                Limb2 rhat = high - qh * Limb2(divisor_high);
+                // Knuth D3: 只要 qhat*v[n-2] > rhat*BASE + u[j+n-2] 就说明 qhat 估大
+                // (rhat >= BASE 时无需再测, 此时 qhat 必已正确)。至多循环 2 次。
+                if (len2 >= 2)
                 {
-                    prod_span.size = len2;
+                    Limb2 u2 = dividend[len1 - 2];
+                    while (rhat < Limb2(BASE) &&
+                           qh * Limb2(divisor_high2) > rhat * Limb2(BASE) + u2)
+                    {
+                        qh--;
+                        rhat += divisor_high;
+                    }
                 }
+                Limb qhat = Limb(qh);
                 Span dividend_span(dividend + quot_idx);
-                int count = 0;
-                while (absCompare(View(prod_span), View(dividend_span)) > 0)
+                assert(dividend_span.size == len2 + 1);
+                // D38: 融合 absMul1 + absSub 为单遍 submul_1, 中间积不再落内存。
+                // 先减再看借位: 借位 <=> qhat 估大 (D3 之后概率 ~2/BASE)
+                bool bf = absSubMul1<PADDED>(dividend_span, divisor, qhat);
+                while (bf)
                 {
-                    assert(count < 2);
-                    count++;
-                    auto bf = absSub(prod_span, divisor, prod_span);
                     qhat--;
-                    assert(!bf);
+                    // 加回除数产生的进位正好抵消之前的借位; 没进位说明还差, 继续
+                    bf = !absAdd(dividend_span, divisor, dividend_span);
                 }
-                auto bf = absSub(dividend_span, prod_span, dividend_span);
-                assert(!bf);
                 quotient[quot_idx] = qhat;
                 dividend.size = len1;
             }
@@ -2684,8 +4681,8 @@ namespace hint
             thread_local std::vector<Limb> tprod, tinv2;
             size_t prod_size = inv0_len * 2 + k;
             size_t inv2_size = k + 1;
-            if (tprod.size() < prod_size) tprod.resize(prod_size);
-            if (tinv2.size() < inv2_size) tinv2.resize(inv2_size);
+            if (tprod.capacity() < prod_size) tprod.reserve(prod_size);
+            if (tinv2.capacity() < inv2_size) tinv2.reserve(inv2_size);
             std::fill_n(tinv2.data(), s, Limb(0)); 
             Span prod_span(tprod.data(), prod_size), inv2_span(tinv2.data(), inv2_size);
             bool cf = absAdd(inv0, inv0, inv2_span + s); 
@@ -2703,7 +4700,7 @@ namespace hint
             // B-1 优化: 若有预计算的 m DFT 且 float_len 匹配，用 fftMulPre 省 1 次 DFT(m)
             {
                 size_t conv_len = inv0_len * 2 + k - 1;
-                size_t need_float_len = int_ceil2(conv_len);
+                size_t need_float_len = fft_ceil_lin(conv_len);
                 if (m_dft != nullptr && m_dft_float_len == need_float_len)
                 {
                     fftMulPre(View(tprod.data(), inv0_len * 2), m_dft, k, need_float_len, prod_span);
@@ -2716,7 +4713,7 @@ namespace hint
 #ifdef PROFILE_DIV
             auto _inv_t3 = std::chrono::high_resolution_clock::now();
             PROF_PRINT("  [prof]   absInvNewton(k=%zu): absMul/fftMulPre (conv_len=%zu, fl=%zu): %.3f ms\n",
-                    k, inv0_len * 2 + k - 1, int_ceil2(inv0_len * 2 + k - 1),
+                    k, inv0_len * 2 + k - 1, fft_ceil_lin(inv0_len * 2 + k - 1),
                     std::chrono::duration<double, std::milli>(_inv_t3 - _inv_t2).count());
 #endif
             prod_span = prod_span + 2 * (k - s);        
@@ -2733,6 +4730,7 @@ namespace hint
                                     const double *m_dft = nullptr, size_t m_dft_float_len = 0)
         {
             size_t k = m.size;  // GMP n
+            INVPROF_SCOPE(k);
             assert(k > 0);
             assert(inv.size >= k + 1);
 
@@ -2746,7 +4744,80 @@ namespace hint
                 return;
             }
 
+#ifndef CYCLIC_MIN_K
+#define CYCLIC_MIN_K 4096
+#endif
+            // === D9: 自适应 split 点 s (cyclic 窗口对齐) ===
+            //   Newton 精度要求 rn >= ceil(k/2), 即 s <= (k-1)/2  —— 硬上界, s 只能减不能增.
+            //   cyclic 生效要求 p2 = ceil2(k+1) <= k + rn = 2k - s, 即 s <= 2k - p2.
+            //
+            //   ★ 关键观察: 默认 s=(k-1)/2 会让比值 r = k/ceil2(k+1) 成为**不动点**
+            //     (k -> k/2 时 p2 -> p2/2, r 不变). cyclic 需要 r >= 2/3;
+            //     若顶层 r 落在死区 [1/2, 2/3), 则**整条 Newton 阶梯每一层都关闭 cyclic**.
+            //     实测 D4 瓶颈 k=83334: r=0.636, 11 层 cyclic 启用 0 层 —— absInvNewtonGMP
+            //     完全退化成 absInvNewton, 还白背了额外开销.
+            //   ★ 对策: 顶层把 s 下调到 2k-p2, 一次性把 r 抬进 >= 2/3 的吸引域,
+            //     之后各层沿用默认 s 即自动保持在吸引域内 (k=83334: 0/11 -> 5/11, 且是最大的 5 层).
+            //   代价: 该层 rn 由 0.5k 增至 (p2-k), 递归子问题变大; 收益: 该层顶层卷积
+            //     由 fallback(absSqr ceil2(2*inv0_len) + absMul 262144) 降为单次 cyclic(131072).
+            //   护栏: 组合逻辑有 assert(2k >= 3rn) 即 rn <= 0.667k; 这里取 rn <= 0.65k 留余量.
+            //
+            // === D10 追加: 本层开不了 cyclic 时, 为**子层**铺路 ===
+            //   有一类形状 (k 刚过 2 幂, 如 a_max_b_random_02 的 k=146990, r=0.561) 连
+            //   s=2k-p2 都救不了 —— 需要 rn >= p2-k = 0.783k, 超过 2k/3 硬上限. D9 遇到
+            //   这种直接放弃, 整条阶梯 0/12 全关.
+            //   ★ 但 fallback 的两次 FFT 尺寸是 ceil2 台阶函数: rn 从 0.5k 抬到 0.65k
+            //     往往**落在同一个台阶内**, 本层代价分文不涨; 而子层 k'=rn 的比值
+            //     rn/ceil2(rn+1) 会被一次性抬进 >= 2/3 吸引域 —— 一次免费投入, 整条
+            //     子阶梯受益. 实测 a_max_b_random_02: 0/12 -> 5/12, 倒数 FFT -16.1%.
+            //   闸门 (缺一不可, 否则反亏): 子层须 (a) >= CYCLIC_MIN_K, (b) ceil2(k'+1) <= 1.65k'.
+            //   模拟器 lc_bench/vm/ladder2.py 全域扫 k0 in [4096,300000]: 0 个形状变差, 总量 -9.9%.
+            //
+            // ★ D12 现状: mn 改用 fft_ceil 后 rn_cyc <= rn_min **恒成立**(证明见下方 mn 选择处),
+            //   下面 `rn_cyc > rn_min` 的判据恒假 -> 整块自动失效, 默认 split 就已开着 cyclic.
+            //   保留代码的意义: -DNO_FFT3 时 fft_ceil 退化为 int_ceil2, 死区回来, 该 hack
+            //   随之复活并精确还原 D10 行为 -> A/B 对比时两侧都是各自的最优形态.
             size_t s = (k - 1) / 2;
+#ifndef DISABLE_ADAPTIVE_SPLIT
+            if (k >= CYCLIC_MIN_K)
+            {
+                // 必须与 mn 用同一档位函数, 否则会基于错误的 mn 白抬 rn (纯亏)
+                const size_t p2_adj = fft_ceil_mn_q(k + 1);
+                const size_t rn_min = k - s;                            // = ceil(k/2), Newton 精度下界
+                const size_t rn_max = (k * 13) / 20;                    // 0.65k
+                const size_t rn_cyc = (p2_adj > k) ? (p2_adj - k) : 0;  // 本层开 cyclic 所需最小 rn
+
+                if (rn_cyc > rn_min)  // rn_cyc <= rn_min 表示默认 split 就已经开着, 不动
+                {
+                    if (rn_cyc <= rn_max)
+                    {
+                        // (1) 本层能开: 把 rn 抬到刚好开启 cyclic
+                        s = k - rn_cyc;
+                    }
+                    else
+                    {
+                        // (2) 本层开不了: 在不抬高本层 fallback FFT 档位的前提下把 rn 顶到最大
+                        const size_t c1 = fft_ceil_mn_q(2 * (rn_min + 1));           // absSqr(inv0)
+                        const size_t c2 = fft_ceil_mn_q(2 * (rn_min + 1) + k - 1);   // absMul(inv0^2, m)
+                        const size_t lim1 = c1 / 2 - 1;                          // 2*(rn+1)     <= c1
+                        const size_t lim2 = (c2 - k - 1) / 2;                    // 2*(rn+1)+k-1 <= c2
+                        const size_t rn_free = std::min(std::min(lim1, lim2), rn_max);
+                        if (rn_free > rn_min)
+                        {
+                            // 候选: rn_free, 以及区间内最大的 2^j-1 (比值 ~1 的局部最优点).
+                            // 比较 r/ceil2(r+1) 用交叉相乘, 避免浮点.
+                            size_t cand = rn_free;
+                            const size_t p = int_ceil2(rn_free + 1) / 2 - 1;
+                            if (p >= rn_min && p <= rn_free &&
+                                p * fft_ceil_mn_q(cand + 1) > cand * fft_ceil_mn_q(p + 1))
+                                cand = p;
+                            if (cand >= CYCLIC_MIN_K && fft_ceil_mn_q(cand + 1) * 20 <= cand * 33)
+                                s = k - cand;
+                        }
+                    }
+                }
+            }
+#endif
             // 递归调用自身 (后续 cyclic 路径启用后, 递归层也会走 GMP 风格)
             absInvNewtonGMP(m + s, inv);
             size_t rn = k - s;        // GMP rn
@@ -2754,19 +4825,44 @@ namespace hint
             Span inv0(inv.ptr, inv0_len);
 
             // === mn 选择 (cyclic convolution 长度) ===
-            // 约束: fftMulModBm1 要求 m 是 2 幂
+            // 约束: fftMulModBm1 要求 m 是合法 FFT 长度 (2^k 或 3*2^k)
             // 生效条件: mn >= k+1 (容纳 n+1) 且 mn <= k+rn (GMP ASSERT(n >= mn-rn))
+            //
+            // ★ D12: int_ceil2 -> fft_ceil, cyclic 死区被彻底消除
+            //   旧: mn=int_ceil2(k+1) 最坏 ~2k, 要开 cyclic 需 rn >= mn-k ~ k, 但组合逻辑
+            //       硬上限 rn <= 2k/3 -> 大片 k 永远开不了 cyclic (D9/D10 的"自适应 split"
+            //       就是为了把 rn 抬进吸引域而生的 hack).
+            //   新: mn=fft_ceil(k+1) 最坏 1.5k. 设 p=int_ceil2(k+1):
+            //       - 若 0.75p >= k+1: mn=0.75p, 且 k+1 > p/2 => mn-k <= 0.75p-p/2 = p/4
+            //         <= ceil((k+1)/2) = rn(默认 split) ✓
+            //       - 否则: mn=p < (4/3)(k+1) => mn-k < (k+4)/3 ~ 0.33k < rn ✓
+            //       两种情形下 **默认 split 恒满足 mn <= k+rn** -> cyclic 全程可开.
             // 阈值: k >= CYCLIC_MIN_K 时启用, 小 k 走 fallback (精度不足风险)
             //   实测: k=112/2001 有数据相关 FAIL (b_top=4/8), k>=6250 benchmark 全 PASS
             //   阈值 4096 平衡: 小 k 性能收益小, 风险高; 大 k 收益大, 已验证安全
-#ifndef CYCLIC_MIN_K
-#define CYCLIC_MIN_K 4096
-#endif
-            size_t mn = int_ceil2(k + 1);
+            size_t mn = fft_ceil_mn(k + 1);
+            // ★ D12 修复: 退化除数守卫 —— GMP 布局要求 inv0 的整数位恒为 1.
+            //   m 归一化后 top limb >= BASE/2. 记子问题 m' = m[s..k-1] (rn 位),
+            //   则 inv0 = floor(B^{2rn}/m') ∈ (B^rn, 2*B^rn]; 仅当 m' == B^rn/2 **恰好**
+            //   (即 m'.top == BASE/2 且其余 limb 全 0) 时取到上界 2*B^rn, 此时
+            //   inv.ptr[rn] == 2 且低 rn 位全 0.
+            //   GMP invertappr 全程假定 ip = inv0 - B^rn 是 rn 位小数、整数位隐含为 1;
+            //   整数位=2 会让 L217 的 MPN_DECR_U(ip-rn, rn, cy) 在全零串上减 -> 下溢 abort.
+            //   (实测 b = 5*10^n / 25*10^n / 125*10^n / 5*10^n+1, 归一化后 m = 5000*B^{k-1}.)
+            //   fallback (absInvNewton HIGH-half 提取法) 天然支持整数位=2, 故直接退回.
+            //   触发条件极窄 (m' 必须是 B^rn/2 的精确形式), 对正常输入零开销.
+            const bool inv0_degenerate = (inv.ptr[rn] != 1);
 #ifndef DISABLE_2NXN_CYCLIC
-            bool use_cyclic = (mn >= k + 1) && (mn <= k + rn) && (k >= CYCLIC_MIN_K);
+            bool use_cyclic = (mn >= k + 1) && (mn <= k + rn) && (k >= CYCLIC_MIN_K)
+                              && !inv0_degenerate;
 #else
             bool use_cyclic = false;
+#endif
+            INVPROF_SET(s, rn, mn, (int)use_cyclic);
+#ifdef DIV_INVPROBE
+            if (k >= 1024)
+                fprintf(stderr, "[invprobe] k=%zu s=%zu rn=%zu mn=%zu cyclic=%d\n",
+                        k, s, rn, mn, (int)use_cyclic);
 #endif
 
             if (use_cyclic)
@@ -2779,10 +4875,11 @@ namespace hint
                 // --- 第一步: cyclic convolution ---
                 // xp_mod[0..mn-1] = (inv0 * m) mod (B^mn - 1)
                 thread_local std::vector<Limb> txp_mod;
-                if (txp_mod.size() < mn + 2) txp_mod.resize(mn + 2);
+                if (txp_mod.capacity() < mn + 2) txp_mod.reserve(mn + 2);
                 std::fill_n(txp_mod.data(), mn + 2, Limb(0));
                 Span xp_mod(txp_mod.data(), mn);
 
+                INVPH_DECL(conv);
                 if (m_dft != nullptr && m_dft_float_len == mn)
                 {
                     fftMulModBm1Pre(inv0, m_dft, k, mn, xp_mod);
@@ -2791,6 +4888,48 @@ namespace hint
                 {
                     fftMulModBm1(inv0, m, mn, xp_mod);
                 }
+                INVPH_END(conv, k, "conv");
+                INVPH_DECL(corr);
+
+#ifdef DIV_INVCHECK
+                // 探针: 用线性卷积 + 手工折叠算出 (inv0*m) mod (B^mn-1) 的参考值,
+                //       与 fftMulModBm1 的输出逐位比对 -> 区分"卷积错"还是"GMP 修正错".
+                {
+                    size_t il = count_true_length(inv0.ptr, inv0.size);
+                    size_t ml = count_true_length(m.ptr, m.size);
+                    std::vector<Limb> ref(il + ml + 2, 0);
+                    absMul(View(inv0.ptr, il), View(m.ptr, ml), Span(ref.data(), il + ml));
+                    std::vector<Limb> acc(mn + 1, 0);
+                    for (size_t off = 0; off < il + ml; off += mn)
+                    {
+                        size_t len = std::min(mn, il + ml - off);
+                        Limb c = 0;
+                        for (size_t j = 0; j < mn; j++)
+                        {
+                            Limb2 sv = Limb2(acc[j]) + Limb2(j < len ? ref[off + j] : Limb(0)) + c;
+                            acc[j] = Limb(sv % BASE);
+                            c = Limb(sv / BASE);
+                        }
+                        while (c)
+                        {
+                            for (size_t j = 0; j < mn && c; j++)
+                            {
+                                Limb2 sv = Limb2(acc[j]) + c;
+                                acc[j] = Limb(sv % BASE);
+                                c = Limb(sv / BASE);
+                            }
+                        }
+                    }
+                    size_t bad = mn;
+                    for (size_t j = 0; j < mn; j++)
+                        if (acc[j] != xp_mod[j]) { bad = j; break; }
+                    if (bad != mn)
+                        fprintf(stderr, "[invchk] CONV-MISMATCH k=%zu rn=%zu mn=%zu at j=%zu got=%u ref=%u\n",
+                                k, rn, mn, bad, (unsigned)xp_mod[bad], (unsigned)acc[bad]);
+                    else
+                        fprintf(stderr, "[invchk] conv-ok k=%zu rn=%zu mn=%zu\n", k, rn, mn);
+                }
+#endif
 
                 // --- GMP 修正: xp = (xp - B^{rn+k}) mod (B^mn - 1) ---
                 // 注: GMP 源码 L176-L182 是 (ip*dp + dp*B^rn - B^{rn+n}) mod B^mn-1
@@ -2836,6 +4975,10 @@ namespace hint
                 //    xp_mod[k] >= BASE-2 → 负剩余类 (X < 0)
                 Limb xpn = xp_mod[k];
                 bool is_positive;
+#ifdef DIV_INVPROBE
+                fprintf(stderr, "[invres] k=%zu xpn=%u class=%s\n", k, (unsigned)xpn,
+                        (xpn < 2) ? "POS" : (xpn >= BASE - 2 ? "NEG" : "ODD"));
+#endif
                 if (xpn < 2)
                 {
                     is_positive = true;
@@ -2854,8 +4997,10 @@ namespace hint
                 }
 
                 // === 阶段 B: GMP 两步分解 (cyclic + mul_n + 组合) ===
-                // 仅处理正剩余类; 负剩余类回退到 fallback (full mul 组合, 与 absInvNewton 一致)
-                if (is_positive)
+                // D9: 正/负剩余类**均已实现** (GMP invertappr.c L225-L266), 尾部 mul_n+组合共用.
+                //   D4 只实现了正剩余类, 负剩余类 goto fallback —— 那等于 cyclic 白算一遍再把
+                //   fallback 整个跑一遍, 比不开 cyclic 还慢. 实测 length_ratio_integer_02 上
+                //   10 次 cyclic 有 2 次落负类, 其中一次正是最贵的顶层 k=83334.
                 {
                     // 1. 把 inv0 从 inv.ptr[0..rn] 移到 inv.ptr[s..k] (与 GMP 布局对齐)
                     //    移动后: inv.ptr[s..k-1] = inv0 低 rn 位, inv.ptr[k] = 1 (整数位)
@@ -2863,7 +5008,7 @@ namespace hint
 
                     // 2. 分配 xp_full 缓冲区 (长度 2k+2, 初始清零)
                     thread_local std::vector<Limb> txp_full;
-                    if (txp_full.size() < 2 * k + 2) txp_full.resize(2 * k + 2);
+                    if (txp_full.capacity() < 2 * k + 2) txp_full.reserve(2 * k + 2);
                     std::fill_n(txp_full.data(), 2 * k + 2, Limb(0));
 
                     // 3. 把 cyclic 结果 xp_mod[0..mn-1] 复制到 xp_full[0..mn-1]
@@ -2871,7 +5016,10 @@ namespace hint
 
                     Limb *xp = txp_full.data();
                     Limb cy = 0;  // cyclic 模式 cy=0 (GMP L183)
+                    assert(2 * k >= 3 * rn && "xp_high and mul_out must not overlap");
 
+                  if (is_positive)
+                  {
                     // 4a. GMP L188-L199: 正剩余类修正
                     //   cy = xp[n]; if (cy++ && !sub_n) { ASSERT_CARRY(sub_n); ++cy; }
                     cy = xp[k];  // 0 or 1
@@ -2920,14 +5068,38 @@ namespace hint
                         bool bf2 = absSub1(View(inv.ptr + s, rn), cy, Span(inv.ptr + s, rn));
                         assert(!bf2 && "MPN_DECR_U underflow");
                     }
+                  }
+                  else
+                  {
+                    // === 负剩余类 (GMP invertappr.c L258-L266) ===
+                    //   xp[n] ∈ {BASE-2, BASE-1}. cyclic 模式 cy=0, 故 MPN_DECR_U(xp,n+1,cy) 为空操作.
+                    //   if (xp[n] != BASE-1) { INCR_U(ip-rn, rn, 1); ASSERT_CARRY(add_n(xp, xp, dp-n, n)); }
+                    //   mpn_com(xp + 2n - rn, xp + n - rn, rn)   —— 按位取反在 base B 下是 (BASE-1) - x
+                    if (xp[k] != Limb(BASE - 1))
+                    {
+                        assert(xp[k] == Limb(BASE - 2) && "negative class: xp[n] must be BASE-2");
+                        bool cf3 = absAdd1(View(inv.ptr + s, rn), 1, Span(inv.ptr + s, rn));
+                        assert(!cf3 && "MPN_INCR_U overflow into integer bit");
+                        (void)cf3;
+                        bool carry3 = absAdd(View(xp, k), m, Span(xp, k));
+                        assert(carry3 && "ASSERT_CARRY: add_n must carry out");
+                        (void)carry3;
+                    }
+                    Limb *xp_high_neg = xp + 2 * k - rn;
+                    for (size_t i = 0; i < rn; i++)
+                        xp_high_neg[i] = Limb(BASE - 1 - xp[s + i]);
+                  }
 
                     // 5. GMP L228: mul_n: xp[0..2rn-1] = xp_high * inv0_low_rn
                     //   xp_high = xp[2k-rn..2k-1] (rn 位), inv0_low_rn = inv.ptr[s..k-1] (rn 位)
+                    INVPH_END(corr, k, "corr");
                     {
+                        INVPH_DECL(muln);
                         View xp_high_view(xp + 2 * k - rn, rn);
                         View inv0_low_view(inv.ptr + s, rn);
                         Span mul_out(xp, 2 * rn);
                         absMul(xp_high_view, inv0_low_view, mul_out);
+                        INVPH_END(muln, k, "mul_n");
                     }
 
                     // 6. GMP L229-L231: 组合
@@ -2961,12 +5133,91 @@ namespace hint
                         assert(!cf2 && "MPN_INCR_U overflow into integer bit");
                     }
 
+                    // === GMP mpn_invert (invert.c L69-L84): 修正 invertappr 的 off-by-one ===
+                    // ★ D12: 这是 D9 引入 cyclic 后的潜伏 bug, D10 带着它 AC 了 #390217.
+                    //   ni_invertappr 语义是"近似"倒数, 契约 inv <= 真值, 误差只可能 0 或 1
+                    //   (invertappr.c L75 "Assume the error can only be 0 or 1").
+                    //   而本项目的 fallback (absInvNewton HIGH-half 提取法) 是**精确**的, 下游
+                    //   (absDivMu / absDivNewtonWithInv / 反归一化 selfDivRem1) 全部按"精确 inv"
+                    //   假定工作 -> cyclic 少 1 -> 商少 -> 余数非整除 -> assert(rem==0) 炸.
+                    //   实测 a=全9 / b=10^k+1 (l2=8191): cyclic 给 1.2499..9999, 真值 1.2500..0000.
+                    //
+                    // GMP 的修正: 用保守标志 e 检测被丢弃低位可能产生的进位, 命中才验证:
+                    //   e = (xp[3rn-n-1] > MAX-7)        (invertappr.c L275 "Be conservative")
+                    //   if (e) { 算 dp*(inv+1); 若无进位说明 inv 真的少 1 -> inv+1 }
+                    // 本项目 base=10^4 (非 2^64), 阈值放宽到 BASE-16 更保守. 触发率 ~0.16%,
+                    // 平均代价可忽略, 但堵死了 all-9 / B^k+1 这类对抗性输入的 off-by-one.
+                    // 修正后仍满足 inv <= 真值 (判据就是 (inv+1)*m < B^{2k}), 不破坏 Newton 单侧误差.
+                    {
+                        assert(3 * rn >= k + 1);
+                        Limb inv_probe = xp[3 * rn - k - 1];
+#ifdef DIV_INVPROBE
+                        fprintf(stderr, "[invfix] k=%zu rn=%zu probe=%u thr=%u\n",
+                                k, rn, (unsigned)inv_probe, (unsigned)(BASE - 16));
+#endif
+#ifdef DIV_INVFIX_ALWAYS
+                        if (true)
+#else
+                        if (inv_probe > Limb(BASE - 16))
+#endif
+                        {
+                            INVPH_DECL(fix);
+                            thread_local std::vector<Limb> tinv_p1, tchk;
+                            if (tinv_p1.capacity() < k + 2) tinv_p1.reserve(k + 2);
+                            if (tchk.capacity() < 2 * k + 3) tchk.reserve(2 * k + 3);
+                            std::copy(inv.ptr, inv.ptr + k + 1, tinv_p1.data());
+                            bool cf_p1 = absAdd1(View(tinv_p1.data(), k + 1), 1,
+                                                 Span(tinv_p1.data(), k + 1));
+                            assert(!cf_p1 && "inv+1 overflow");
+                            (void)cf_p1;
+                            std::fill_n(tchk.data(), 2 * k + 2, Limb(0));
+                            absMul(View(tinv_p1.data(), k + 1), m, Span(tchk.data(), 2 * k + 1));
+                            // 判据: (inv+1)*m <= B^{2k}  ->  inv 确实少 1, 补上.
+                            // ★ 注意是 "<=" 不是 GMP 的 "<". 设 V=floor(B^2k/m)-B^k (精确值),
+                            //   r = B^2k mod m, GMP 判 (inv+1)*m >= B^2k 就不加:
+                            //     inv=V-1, r>0 -> (V+B^k)*m = B^2k-r < B^2k  -> 加   ✓
+                            //     inv=V-1, r=0 -> = B^2k, 被判"有进位"        -> 不加 ✗ 漏!
+                            //   GMP base=2^64 时 r=0 需 m | 2^{128n}, 即 m=2^{64n-1} 唯一退化点,
+                            //   实际不会撞上; 但本项目 base=10^4, m=8000*B^{k-1}=8*10^{4k-1} 整除
+                            //   10^{8k} —— 退化情况常见 (任何 2^a*5^b*10^j 型 m). 故必须用 <=.
+                            bool need_inc = false;
+                            if (tchk[2 * k] == 0)
+                            {
+                                need_inc = true;  // < B^{2k}
+                            }
+                            else if (tchk[2 * k] == 1)
+                            {
+                                // 恰好 == B^{2k} ? (低 2k limb 必须全 0). 从高位往低位扫, 通常秒退.
+                                need_inc = true;
+                                for (size_t j = 2 * k; j-- > 0;)
+                                    if (tchk[j] != 0) { need_inc = false; break; }
+                            }
+#ifdef DIV_INVPROBE
+                            fprintf(stderr, "[invfix] k=%zu tchk[2k]=%u -> %s\n", k,
+                                    (unsigned)tchk[2 * k], need_inc ? "APPLY +1" : "no-op");
+#endif
+                            if (need_inc)
+                            {
+                                bool cfx = absAdd1(View(inv.ptr, k + 1), 1, Span(inv.ptr, k + 1));
+                                assert(!cfx && "invert correction overflow");
+                                (void)cfx;
+                            }
+                            INVPH_END(fix, k, "offby1fix");
+                        }
+                    }
+
+#ifdef DIV_INVDUMP
+                    DIV_INVDUMP_EMIT("cyc", k, inv);
+#endif
                     return;
                 }
                 // 负剩余类或异常: 回退到 fallback (full mul 组合逻辑, 与 absInvNewton 一致)
             }
 
         gmp_newton_fallback:
+#ifdef INVPROF
+            if (_ips.key.cyc == 1) _ips.key.cyc = 2;  // cyclic 试过但退回 fallback
+#endif
             // === fallback: 原 absInvNewton 的 HIGH-half 提取法 ===
             // Newton 一步: inv = 2*inv0 - (inv0^2 * m)_high
             // 注: 此分支与 absInvNewton 逻辑完全一致, 用于保证正确性
@@ -2974,8 +5225,8 @@ namespace hint
             thread_local std::vector<Limb> tprod, tinv2;
             size_t prod_size = inv0_len * 2 + k;
             size_t inv2_size = k + 1;
-            if (tprod.size() < prod_size) tprod.resize(prod_size);
-            if (tinv2.size() < inv2_size) tinv2.resize(inv2_size);
+            if (tprod.capacity() < prod_size) tprod.reserve(prod_size);
+            if (tinv2.capacity() < inv2_size) tinv2.reserve(inv2_size);
             std::fill_n(tinv2.data(), s, Limb(0));
             Span prod_span(tprod.data(), prod_size), inv2_span(tinv2.data(), inv2_size);
             bool cf = absAdd(inv0, inv0, inv2_span + s);
@@ -2986,7 +5237,7 @@ namespace hint
             //       所以 float_len 不匹配时不复用 (保持与 absInvNewton 一致的行为)
             {
                 size_t conv_len = inv0_len * 2 + k - 1;
-                size_t need_float_len = int_ceil2(conv_len);
+                size_t need_float_len = fft_ceil_lin(conv_len);
                 if (m_dft != nullptr && m_dft_float_len == need_float_len)
                 {
                     fftMulPre(View(tprod.data(), inv0_len * 2), m_dft, k, need_float_len, prod_span);
@@ -3000,6 +5251,9 @@ namespace hint
             assert(prod_span[prod_span.size - 1] == 0);
             prod_span.size--;
             absSub(inv2_span, prod_span, inv);
+#ifdef DIV_INVDUMP
+            DIV_INVDUMP_EMIT("fbk", k, inv);
+#endif
         }
         static void absDivNewtonWithInv(Span dividend, View divisor, Span quotient, View inv_span)
         {
@@ -3014,10 +5268,8 @@ namespace hint
             thread_local std::vector<Limb> tqhat, tprod;
             size_t qhat_len = divid_high.size + inv_span.size;
             size_t prod_len = qhat_len - 1;
-            if (tqhat.size() < qhat_len)
-                tqhat.resize(qhat_len);
-            if (tprod.size() < prod_len)
-                tprod.resize(prod_len);
+            if (tqhat.capacity() < qhat_len) tqhat.reserve(qhat_len);
+            if (tprod.capacity() < prod_len) tprod.reserve(prod_len);
             
             Span qhat_span(tqhat.data(), qhat_len), prod_span(tprod.data(), prod_len);
             absMul(inv_span, divid_high, qhat_span); 
@@ -3055,10 +5307,8 @@ namespace hint
             thread_local std::vector<Limb> tqhat, tprod;
             size_t qhat_len = divid_high.size + inv_span.size;
             size_t prod_len = qhat_len - 1;
-            if (tqhat.size() < qhat_len)
-                tqhat.resize(qhat_len);
-            if (tprod.size() < prod_len)
-                tprod.resize(prod_len);
+            if (tqhat.capacity() < qhat_len) tqhat.reserve(qhat_len);
+            if (tprod.capacity() < prod_len) tprod.reserve(prod_len);
             Span qhat_span(tqhat.data(), qhat_len), prod_span(tprod.data(), prod_len);
             fftMulPre(divid_high, inv_dft, inv_span.size, inv_float_len, qhat_span);
             qhat_span = qhat_span + (k + 1);
@@ -3083,8 +5333,8 @@ namespace hint
              std::copy(qhat_span.begin(), qhat_span.end(), quotient.begin());
          }
          
-         // 宽松分块除法: qhat 可能有更大误差，但通过更多修正循环补偿
-         // 用于低精度逆时降低 qhat 估计的压力
+         // 宽松分块除法: dead code in div.cpp (未被调用), 已用 #if 0 移除
+#if 0
          static void absDivNewtonWithInvLoose(Span dividend, View divisor, Span quotient, View inv_span)
          {
              assert(dividend.size <= divisor.size * 2);
@@ -3094,30 +5344,28 @@ namespace hint
              }
              size_t k = divisor.size;
              Span divid_high = dividend + (k - 1);
-             
+
              thread_local std::vector<Limb> tqhat, tprod;
              size_t qhat_len = divid_high.size + inv_span.size;
              size_t prod_len = qhat_len - 1;
-             if (tqhat.size() < qhat_len)
-                 tqhat.resize(qhat_len);
-             if (tprod.size() < prod_len)
-                 tprod.resize(prod_len);
-             
+             if (tqhat.capacity() < qhat_len) tqhat.reserve(qhat_len);
+             if (tprod.capacity() < prod_len) tprod.reserve(prod_len);
+
              Span qhat_span(tqhat.data(), qhat_len), prod_span(tprod.data(), prod_len);
-             absMul(inv_span, divid_high, qhat_span); 
-             qhat_span = qhat_span + (k + 1);         
-             absMul(divisor, qhat_span, prod_span);   
+             absMul(inv_span, divid_high, qhat_span);
+             qhat_span = qhat_span + (k + 1);
+             absMul(divisor, qhat_span, prod_span);
              prod_span.size = count_true_length(prod_span.ptr, prod_span.size);
-             
+
              // 修正循环: 允许多达 5 次迭代（增加容错能力）
              int corrections = 0;
              while (absCompare(prod_span, dividend) > 0 && corrections < 5)
              {
-                 absSub(prod_span, divisor, prod_span); 
+                 absSub(prod_span, divisor, prod_span);
                  absSub1(qhat_span, 1, qhat_span);
-                 corrections++;      
+                 corrections++;
              }
-             absSub(dividend, prod_span, dividend); 
+             absSub(dividend, prod_span, dividend);
              dividend.size = k;
              // 最终检查: 同样允许多次修正
              corrections = 0;
@@ -3131,6 +5379,7 @@ namespace hint
              qhat_span.size--;
              std::copy(qhat_span.begin(), qhat_span.end(), quotient.begin());
          }
+#endif
          
          static void absDivNewtonCore1(Span dividend, View divisor, Span quotient)
         {
@@ -3164,10 +5413,10 @@ namespace hint
                 if (divisor_high.size >= FFT_MUL_THRESHOLD)
                 {
                     thread_local AlignedVec32<double> inv_dft_buf_c1, div_dft_buf_c1;
-                    size_t inv_fl = int_ceil2(2 * divisor_high.size + 1);
-                    size_t div_fl = int_ceil2(2 * divisor_high.size);
-                    if (inv_dft_buf_c1.size() < inv_fl) inv_dft_buf_c1.resize(inv_fl);
-                    if (div_dft_buf_c1.size() < div_fl) div_dft_buf_c1.resize(div_fl);
+                    size_t inv_fl = fft_ceil_lin(2 * divisor_high.size + 1);
+                    size_t div_fl = fft_ceil_lin(2 * divisor_high.size);
+                    if (inv_dft_buf_c1.capacity() < inv_fl) inv_dft_buf_c1.reserve(inv_fl);
+                    if (div_dft_buf_c1.capacity() < div_fl) div_dft_buf_c1.reserve(div_fl);
                     prepareDFT(divisor_high, div_dft_buf_c1.data(), div_fl);
                     absInvNewton(divisor_high, inv_span, div_dft_buf_c1.data(), div_fl);
                     prepareDFT(inv_span, inv_dft_buf_c1.data(), inv_fl);
@@ -3184,7 +5433,7 @@ namespace hint
             
             thread_local std::vector<Limb> t_prod;
             size_t prod_size = quot_len + shift_len;
-            if (t_prod.size() < prod_size) t_prod.resize(prod_size);
+            if (t_prod.capacity() < prod_size) t_prod.reserve(prod_size);
             Span prod_span(t_prod.data(), prod_size);
             View divisor_low(divisor.begin(), shift_len);
             absMul(divisor_low, quotient, prod_span);
@@ -3222,7 +5471,7 @@ namespace hint
         // divisor: len2 位（已归一化，高位 >= HALF_BASE）
         // quotient: len1 - len2 位（输出，高位 1 位已预处理）
         // in: 近似逆精度（in <= len2）
-        static void absDivMu(Span dividend, View divisor, Span quotient, size_t in)
+        static void absDivMu(Span dividend, View divisor, Span quotient, size_t in, bool allow_cyclic = true)
         {
             if (dividend.size <= divisor.size)
             {
@@ -3255,13 +5504,13 @@ namespace hint
             // fftMulPre #1: divid_high(this_in+1) * inv(in+1), 卷积长度 <= 2*in+1
             // fftMulPre #2: qhat(this_in+1) * divisor(len2), 卷积长度 <= len2+in
             thread_local AlignedVec32<double> inv_dft_buf, divisor_dft_buf;
-            size_t inv_float_len = int_ceil2(2 * in + 1);
-            // OPT: divisor_float_len 从 int_ceil2(len2+in+1) 改为 int_ceil2(len2+in)
+            size_t inv_float_len = fft_ceil_lin(2 * in + 1);
+            // OPT: divisor_float_len 从 ceil(len2+in+1) 改为 ceil(len2+in)
             //   conv_len = qhat_span.size + len2 - 1 = (this_in+1) + len2 - 1 = this_in + len2 <= in + len2
-            //   安全: int_ceil2(len2+in) >= conv_len
-            size_t divisor_float_len = int_ceil2(len2 + in);
-            if (inv_dft_buf.size() < inv_float_len) inv_dft_buf.resize(inv_float_len);
-            if (divisor_dft_buf.size() < divisor_float_len) divisor_dft_buf.resize(divisor_float_len);
+            //   安全: fft_ceil(len2+in) >= conv_len
+            size_t divisor_float_len = fft_ceil_lin(len2 + in);
+            if (inv_dft_buf.capacity() < inv_float_len) inv_dft_buf.reserve(inv_float_len);
+            if (divisor_dft_buf.capacity() < divisor_float_len) divisor_dft_buf.reserve(divisor_float_len);
             // FIX: cyclic 路径在 cyclic_m >= 线性卷积长度时退化, fftMulModBm1Pre 精度差,
             //   导致 r-based 修正过度调整 qhat (burnikel_ziegler_bound base=10/10^9 RE).
             //   运行时检测退化, 切换到 linear 路径. 保留有意义的 cyclic (如 1M/500k 22% 提升).
@@ -3275,33 +5524,97 @@ namespace hint
             // FIX: cyclic_m 需满足 2*cyclic_m > len2+in >= len2+this_in, 否则:
             //   wn = len2+this_in-cyclic_m > cyclic_m → Span(ptr,wn) 越界 + (cyclic_m-wn) 下溢
             //   且 unwrap 只处理一次 wrap (k=1), k>=2 时残差完全错误
-            // 方案: 取 max(int_ceil2(len2+1), int_ceil2((len2+in)/2+1))
-            //   2*int_ceil2((len2+in)/2+1) >= len2+in+2 > len2+in >= len2+this_in ✓
+            // 方案: 取 max(fft_ceil(len2+1), fft_ceil((len2+in)/2+1))
+            //   fft_ceil(n) >= n, 故 2*fft_ceil((len2+in)/2+1) >= 2*((len2+in)/2+1)
+            //   >= len2+in+1 > len2+in >= len2+this_in ✓ (len2+in 为奇数时取等前者)
             // 性能: 大比例(a>>b)时 cyclic_m≈非cyclicFFT/2, 仍保留约2倍FFT提升
-            size_t cyclic_m = std::max(int_ceil2(len2 + 1), int_ceil2((len2 + in) / 2 + 1));
+            size_t cyclic_m = std::max(fft_ceil_cycm(len2 + 1), fft_ceil_cycm((len2 + in) / 2 + 1));
+            // (DIV_MUSHAPE 探针已下移至 use_cyclic 计算之后, 以打印真实决策口径)
             // FIX: unwrap 近似误差在多块场景(blocks>>1)累积超出 r-based 修正容错
             // 当 est_blocks>10 时增大 cyclic_m 到 int_ceil2(len2+in+1) > len2+this_in, 消除 unwrap
             // 安全: cyclic 卷积 = 线性卷积 (2*cyclic_m > conv_len), tprod=精确prod, r-based 修正准确
             // 性能: FFT 大小≈非cyclic, 但保留 absDivMu 预计算 inv/divisor DFT 复用优势
-            size_t est_blocks = (quotient.size + in - 1) / in;
-            if (est_blocks > 10) {
-                cyclic_m = int_ceil2(len2 + in + 1);
-            }
+            // D3: 不放大 cyclic_m, 真 cyclic (半尺寸 FFT) 对所有块数生效
             // 运行时检测: cyclic_m >= in+len2 时循环卷积退化为线性 (conv_len_max = in+len2),
             //   fftMulModBm1Pre 精度无优势且更差, 改用 fftMulPre + 双向修正
-            use_cyclic = (cyclic_m < in + len2);
-            if (use_cyclic && divisor_dft_mod_buf.size() < cyclic_m) divisor_dft_mod_buf.resize(cyclic_m);
+            // D4 防御: in<64 时 cyclic_m 与线性卷积尺寸相近 (cyclic 收益可忽略),
+            //   强制走精确线性卷积, 消除小 in 浮点舍入导致的 qhat 顶端偏差风险.
+            // D4: cyclic 仅当调用方允许 (allow_cyclic). 调用方在 mu_in>=64 (D3 已验证 cyclic 安全) 时允许,
+            //   在 mu_in<64 (burnikel 等对抗性余数) 时禁止 -> 走精确线性卷积, 避免 cyclic unwrap 出错.
+            //
+            // ★ D12 FIX (fuzz 回归: l2=8192/8193, a=全9 / b=全9|pow10 商错, rem!=0 断言炸):
+            //   把「是否用 cyclic」的决策口径与「模数多大」解耦.
+            //   - 决策 (cyclic_m_gate) 恒用 2 幂口径 => D12 开 cyclic 的配置集合与 D11 **逐位相同**,
+            //     不新增任何一个未经验证的 cyclic 形状 (absDivMu 的 unwrap 是近似修正, 对
+            //     全9/pow10 这类对抗性余数本就脆弱, 见 mu_in<64 那条历史记录).
+            //   - 尺寸 (cyclic_m) 仍走 fft_ceil => 已验证安全的那些配置照样吃到 fft3 的 FFT 缩减.
+            //   反例: len2=in=8192 时 int_ceil2 给 gate=16384, 不 < in+len2=16384 -> 线性 (D11 行为);
+            //     若用 fft_ceil 则 12288 < 16384 -> 凭空开出一个 wn=4096 的深 wrap cyclic -> 错.
+            // ★ D14: unwrap 精确化后, 闸门口径可以从"保守的 2 幂"放宽到"真实档位"。
+            //   D12 之所以把闸门锁成 int_ceil2, 是因为近似 unwrap 在深 wrap 下会错
+            //   (漏了 mpn_incr_u(tp, cx-cy), 见下方 unwrap 处的推导)。
+            //   现在 unwrap 与 GMP 逐步等价, 判据回归 GMP 本义: "模数 < 线性卷积长度
+            //   ⟺ 发生 wrap ⟺ 有收益", 且 wrap 深度天然安全 (wn < this_in <= len2,
+            //   且 len2+this_in <= 2*len2 < 2*m, 恒单次 wrap)。
+            //   收益样本 length_ratio_integer_00 (len2=166667,in=83334):
+            //     旧: int_ceil2(166668)=262144 不 < 250001 -> 线性卷积 Fl=262144
+            //     新: fft_ceil_cycm(166668)=196608 < 250001 -> 循环卷积 Fc=196608 (-25%)
+#ifdef GATE_POW2
+            const size_t cyclic_m_gate = std::max(int_ceil2(len2 + 1),
+                                                  int_ceil2((len2 + in) / 2 + 1));
+#else
+            const size_t cyclic_m_gate = cyclic_m;
+#endif
+            use_cyclic = (cyclic_m_gate < in + len2) && allow_cyclic;
+#ifdef DIV_MUSHAPE
+            {
+                // 探针用**真实**决策 (use_cyclic), 不再复制一份可能走样的旧口径。
+                const size_t _nblk = (len1 - len2 + in - 1) / in;
+                auto _W = [](size_t n) { return n * std::log2((double)n); };
+                const size_t _Fc = use_cyclic ? cyclic_m : divisor_float_len;
+                const double _w = _nblk * (2 * _W(inv_float_len) + 2 * _W(_Fc));
+                std::fprintf(stderr,
+                             "[mushape] len1=%zu len2=%zu qn=%zu in=%zu nblk=%zu "
+                             "Fi=%zu Fl=%zu Fc=%zu cyc=%d allow=%d blkW=%.6g\n",
+                             len1, len2, len1 - len2, in, _nblk,
+                             inv_float_len, divisor_float_len, cyclic_m,
+                             (int)use_cyclic, (int)allow_cyclic, _w);
+            }
+#endif
+            if (use_cyclic && divisor_dft_mod_buf.capacity() < cyclic_m) divisor_dft_mod_buf.reserve(cyclic_m);
 #endif
 
-            // B-1 优化: 当 in == len2 时, divisor 切片 = 完整 divisor, 可复用 DFT 给 absInvNewton
+            // B-1 优化: 当 in == len2 时, divisor 切片 = 完整 divisor, 可复用 DFT 给倒数
             if (in == len2)
             {
+#if !defined(DISABLE_2NXN_CYCLIC) && !defined(DISABLE_INLEN2_GMP)
+                // === D9: in==len2 改走 GMP 风格倒数 ===
+                //   D7 曾试过这个改动并回归, 根因是 in==len2 时 k=len2 落在比值死区
+                //   [1/2, 2/3) -> GMP 的 cyclic 全程禁用, 退化成 absInvNewton 还多算 DFT.
+                //   adaptive split (见 absInvNewtonGMP) 修掉死区后, 该路径才真正有意义.
+                //
+                //   ★ 额外红利: GMP 顶层 cyclic 长度 mn = ceil2(k+1) = ceil2(len2+1),
+                //     而 absDivMu 的 cyclic_m = max(ceil2(len2+1), ceil2((len2+in)/2+1));
+                //     in==len2 时两者恒等 => divisor 的 DFT 只需算一次(cyclic_m 尺寸),
+                //     倒数与块循环共用, 同时**彻底省掉 divisor_float_len(=ceil2(2*len2)) 的大 DFT**.
+                if (use_cyclic)
+                {
+                    prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
+                    absInvNewtonGMP(divisor, inv_span, divisor_dft_mod_buf.data(), cyclic_m);
+                }
+                else
+                {
+                    prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
+                    absInvNewton(divisor, inv_span, divisor_dft_buf.data(), divisor_float_len);
+                }
+#else
                 prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
                 absInvNewton(divisor, inv_span, divisor_dft_buf.data(), divisor_float_len);
 #ifndef DISABLE_2NXN_CYCLIC
                 if (use_cyclic) {
                     prepareDFT(divisor, divisor_dft_mod_buf.data(), cyclic_m);
                 }
+#endif
 #endif
             }
             else
@@ -3345,8 +5658,8 @@ namespace hint
             // fftMulModBm1Pre 需要 cyclic_m 长度缓冲, cyclic_m 可能 > prod_len_max
             prod_len_max = std::max(prod_len_max, cyclic_m);
 #endif
-            if (tqhat.size() < qhat_len_max) tqhat.resize(qhat_len_max);
-            if (tprod.size() < prod_len_max) tprod.resize(prod_len_max);
+            if (tqhat.capacity() < qhat_len_max) tqhat.reserve(qhat_len_max);
+            if (tprod.capacity() < prod_len_max) tprod.reserve(prod_len_max);
             size_t qn = quotient.size;
             size_t qn_remaining = qn;
 #ifdef PROFILE_DIV
@@ -3447,24 +5760,113 @@ namespace hint
                         //   原 bug: 返回值被丢弃, borrow 保持原值, 导致 cx-cy 修正错误
                         Span prod_rest(prod_mod_span.ptr + wn, cyclic_m - wn);
                         if (borrow) borrow = absSub1(prod_rest, 1, prod_rest);
-                        // GMP L228: cx = mpn_cmp (rp + dn - in, tp + dn, tn - dn) < 0
-                        //   rp_old[dn-in..] = window[len2 .. len2+cmp_len-1], cmp_len = cyclic_m - len2
-                        //   (cmp_len < this_in 因 wn > 0 ⟹ cyclic_m < len2+this_in)
-                        size_t cmp_len = cyclic_m - len2;
-                        View rp_cmp(window.ptr + len2, cmp_len);
-                        View tp_cmp(tprod.data() + len2, cmp_len);
-                        bool cx = (absCompare(rp_cmp, tp_cmp) < 0);
-                        // GMP L229: ASSERT_ALWAYS (cx >= cy) — GMP 保证, moptm 可能违反
-                        // GMP L230: mpn_incr_u (tp, cx - cy) — 用有符号运算正确处理 cx < borrow
-                        int32_t incr_signed = int32_t(cx) - int32_t(borrow);
-                        // FIXED: 移除 ±1 调整 — 原 ±1 调整方向错误导致 qhat 偏差
-                        // 让 tprod = P_low (Case A) 或 P_low+1 (Case B), 由 r-based 修正循环处理残差
-                        // 验证: 1000/1000 fuzz PASS, DIV 1M/500k 18.23ms (+22% vs cyclic-disabled)
-                        // if (incr_signed > 0) {
-                        //     absAdd1(prod_mod_span, 1, prod_mod_span);  // tp += 1
-                        // } else if (incr_signed < 0) {
-                        //     absSub1(prod_mod_span, 1, prod_mod_span);  // tp -= 1
-                        // }
+                        // ★ D14: 精确 unwrap 修正 —— 抛弃 GMP 的 cx/cy 启发式。
+                        //
+                        //   GMP L228-L230 用 cx = mpn_cmp(rp+dn-in, tp+dn, tn-dn) < 0 探测
+                        //   "低位借位是否越过 B^m 边界"。该判据是**单向**的: 它假定 qhat <= q
+                        //   (GMP 的 inv 恒偏小), 于是 e = np_new - R_new < 0, 只可能借位。
+                        //   moptm 的 absInvNewton 可能偏大 => qhat > q => R_new < 0 => e > 0
+                        //   且可超过 B^len2 => 变成**进位** => rp段 < tp段 成立 => cx 误报。
+                        //   实测 medium_02: 5/5 次 cx=1, 而 basicMul ground truth 显示 incr=0,
+                        //   照 GMP 加 1 直接把结果打飞 (这正是当年"方向错误"被禁用的真因)。
+                        //
+                        //   改用**精确 O(1) 判据**:
+                        //     tp0 = P mod (B^m - 1) = P_hi + P_lo - j*(B^m - 1),  j ∈ {0,1}
+                        //     tp  = tp0 - A   (A = rp_high_wn),  δ = P_hi - A ∈ {-1,0,1}
+                        //     => tp ≡ P_lo + (δ + j) (mod B^m),  err := δ + j ∈ {-1,0,1,2}
+                        //   B^2 = 1e8 >> 2, 故 err = (tp - P) mod B^2 取有符号代表即唯一确定;
+                        //   而 P mod B^2 = (qhat*d) mod B^2 只需各取 2 个 limb。
+                        //   相比 GMP: 双向正确, 且省掉 O(cmp_len) 的 mpn_cmp。
+                        constexpr uint64_t B2 = uint64_t(BASE) * uint64_t(BASE);
+                        uint64_t _q0 = qhat_span.size > 0 ? uint64_t(qhat_span[0]) : 0;
+                        uint64_t _q1 = qhat_span.size > 1 ? uint64_t(qhat_span[1]) : 0;
+                        uint64_t _d0 = uint64_t(divisor[0]);
+                        uint64_t _d1 = divisor.size > 1 ? uint64_t(divisor[1]) : 0;
+                        uint64_t _pmod = (_q0 * _d0 + (_q0 * _d1 + _q1 * _d0) * uint64_t(BASE)) % B2;
+                        uint64_t _tmod = (uint64_t(prod_mod_span[0])
+                                          + uint64_t(prod_mod_span[1]) * uint64_t(BASE)) % B2;
+                        int64_t _err = int64_t((_tmod + B2 - _pmod) % B2);
+                        if (_err > int64_t(B2 / 2)) _err -= int64_t(B2);
+                        // ★ D14: 恢复 GMP 的精确 unwrap 修正 (早期被禁用)。
+                        //
+                        //   为什么必须有它 —— 推导:
+                        //     P = qhat*d, 且 R*B^in + np_new = P + R_new  (0 <= R_new < d)
+                        //     => P = R*B^in + (np_new - R_new),  |np_new - R_new| < B^in
+                        //     故 P div B^m 与 (R*B^in) div B^m = R_hi 至多差 1;
+                        //     差 1 <=> R*B^in 的低 m 位距 0 或 B^m 不到 B^in
+                        //          <=> R 的低 (m-in) 位全 0 或全 (BASE-1)。
+                        //   => 随机输入下概率 ~ B^-(m-in) ≈ 0 (所以旧代码"看着没事"),
+                        //      但**全 9 / 10^k 这类对抗输入必然命中** —— 正是 D12 fuzz 回归
+                        //      (l2=8192/8193, a=全9, b=全9|pow10 商错) 的签名。
+                        //   漏掉它 => tp = P_low - 1 => 余数偏大 1; r-based 修正循环只能整
+                        //      "除数"地加减, 修不了 1 => 该块余数错 => 后续块全错。
+                        //
+                        //   为什么当年"方向错误": 那时 `borrow` 还没被正确捕获 (见上方
+                        //   "FIX: 捕获 absSub1 返回值" —— 该修复是后来才补的), cy 恒等于
+                        //   第一段借位, cx-cy 自然算错。cy 已修正, 现在可以恢复。
+                        //
+                        //   D14 恢复它的目的: unwrap 精确后, cyclic 闸门才敢从 int_ceil2
+                        //   口径放宽到真实 fft3 档位 (见 cyclic_m_gate), length_ratio_integer_00
+                        //   这类 (int_ceil2(166668)=262144, 57% 浪费) 才能吃到 196608 半尺寸卷积。
+                        // UNWRAP_MODE: 0=不修正(D13 行为) 1=只加(GMP 假定 cx>=cy) 2=有符号
+#ifndef UNWRAP_MODE
+#define UNWRAP_MODE 0
+#endif
+#ifdef UNWRAP_PROBE
+                        {
+                            // ground truth: 用 basicMul 算精确 P = qhat*divisor, 取低 cyclic_m 位
+                            // 与当前 tp 比对, 反推"真正需要的 incr"。仅小规模启用 (O(n^2))。
+                            int _true = 99;  // 99 = 未测
+                            if (cyclic_m <= 8192)
+                            {
+                                size_t _pl = len2 + qhat_span.size;
+                                std::vector<Limb> _ex(_pl + 2, Limb(0));
+                                basicMul(View(divisor.ptr, divisor.size),
+                                         View(qhat_span.ptr, qhat_span.size),
+                                         Span(_ex.data(), _pl));
+                                View _plo(_ex.data(), cyclic_m);
+                                std::vector<Limb> _t(cyclic_m);
+                                if (absCompare(_plo, View(prod_mod_span.ptr, cyclic_m)) == 0)
+                                {
+                                    _true = 0;
+                                }
+                                else
+                                {
+                                    std::memcpy(_t.data(), prod_mod_span.ptr, cyclic_m * sizeof(Limb));
+                                    Span _ts(_t.data(), cyclic_m);
+                                    absAdd1(_ts, 1, _ts);
+                                    if (absCompare(_plo, View(_t.data(), cyclic_m)) == 0)
+                                    {
+                                        _true = 1;
+                                    }
+                                    else
+                                    {
+                                        std::memcpy(_t.data(), prod_mod_span.ptr, cyclic_m * sizeof(Limb));
+                                        absSub1(_ts, 1, _ts);
+                                        if (absCompare(_plo, View(_t.data(), cyclic_m)) == 0)
+                                            _true = -1;
+                                    }
+                                }
+                            }
+                            // 对照 GMP 的旧判据, 量化其误报
+                            size_t _cmp_len = cyclic_m - len2;
+                            bool _cx = (absCompare(View(window.ptr + len2, _cmp_len),
+                                                   View(tprod.data() + len2, _cmp_len)) < 0);
+                            int _gmp_incr = int(_cx) - int(borrow);
+                            // 一致性: _err 应恒等于 -_true
+                            if (_err != 0 || _true != 0 || _gmp_incr != 0)
+                                std::fprintf(stderr,
+                                             "[unwrap] len2=%zu this_in=%zu m=%zu wn=%zu "
+                                             "gmp_incr=%d err=%d TRUE=%d\n",
+                                             len2, this_in, cyclic_m, wn, _gmp_incr,
+                                             int(_err), _true);
+                        }
+#endif
+                        // 应用精确修正: tp -= err  (err ∈ {-1,0,1,2})
+                        if (_err > 0)
+                            absSub1(prod_mod_span, Limb(_err), prod_mod_span);
+                        else if (_err < 0)
+                            absAdd1(prod_mod_span, Limb(-_err), prod_mod_span);
                     }
                     // 不重建 prod 高位! 真实 prod 高 wn 位由 r-based 修正循环处理
                 }
@@ -3711,14 +6113,13 @@ namespace hint
 
              // 预计算 divisor_dft（同时用于 absInvNewton 的 DFT 复⽤和 fast blocks）
              thread_local AlignedVec32<double> inv_dft_buf, divisor_dft_buf;
-             size_t inv_float_len = int_ceil2(len2 * 2 + 1);
-             size_t divisor_float_len = int_ceil2(len2 * 2);
+             size_t inv_float_len = fft_ceil_lin(len2 * 2 + 1);
+             size_t divisor_float_len = fft_ceil_lin(len2 * 2);
              bool has_divisor_dft = false;
               // 方案 D: blocks >= 2 启用 fast path（原为 blocks >= 3）
               if (blocks >= 2) /* if (blocks >= 3) */
               {
-                  if (divisor_dft_buf.size() < divisor_float_len)
-                      divisor_dft_buf.resize(divisor_float_len);
+                  if (divisor_dft_buf.capacity() < divisor_float_len) divisor_dft_buf.reserve(divisor_float_len);
                   prepareDFT(divisor, divisor_dft_buf.data(), divisor_float_len);
                   has_divisor_dft = true;
               }
@@ -3739,8 +6140,7 @@ namespace hint
             // 方案 D: blocks >= 2 启用 fast path（原为 blocks >= 3）
             if (blocks >= 2) /* if (blocks >= 3) */
             {
-                if (inv_dft_buf.size() < inv_float_len)
-                    inv_dft_buf.resize(inv_float_len);
+                if (inv_dft_buf.capacity() < inv_float_len) inv_dft_buf.reserve(inv_float_len);
                 prepareDFT(inv_span, inv_dft_buf.data(), inv_float_len);
 #ifdef PROFILE_DIV
                 auto _p_t2 = std::chrono::high_resolution_clock::now();
@@ -3838,7 +6238,26 @@ namespace hint
                 Span quot_span(quotient.data.data(), len1 - len2);
                 if (len2 <= 64 || (len1 - len2) <= 64)
                 {
-                    absDivBasicCore(dividend_span, divisor_span, quot_span);
+                    // ---------------- D41: 为向量化收尾铺 16 limb 零 padding ----------------
+                    // absSubMul1<true> 的收尾块会读满 16 limb, 越界部分只读不写。这里把两个
+                    // **局部** Integer 的底层 vector 扩到 len+16 (值 0), 但 Span 仍按逻辑长度
+                    // 构造 -> 语义完全不变, 只是缓冲区尾部合法可读, 零 UB。
+                    // 后续 dividend_norm.removeLeadingZero() 会自动清掉这些高位零。
+                    // len2 < 16 时收尾块本就走标量, 不值得多花一次 resize/搬运。
+                    if (len2 >= 16)
+                    {
+                        dividend_norm.data.resize(len1 + 16, 0);
+                        divisor_norm.data.resize(len2 + 16, 0);
+                        // resize 可能重新分配 -> 指针必须重取
+                        dividend_span = Span(dividend_norm.data.data(), len1);
+                        divisor_span = Span(divisor_norm.data.data(), len2);
+                        absDivBasicCore<true>(dividend_span, divisor_span, quot_span);
+                        dividend_norm.data.resize(len1);
+                    }
+                    else
+                    {
+                        absDivBasicCore<false>(dividend_span, divisor_span, quot_span);
+                    }
                 }
                 else if (len1 < len2 * 2)
                 {
@@ -3851,13 +6270,64 @@ namespace hint
                     size_t mu_in;
                     if (qn_mu > len2)
                     {
-                        mu_in = (qn_mu - 1) / ((qn_mu - 1) / len2 + 1) + 1;
+                        // GMP: nb = ceil(qn/len2) 的下界, in = ceil(qn/nb) <= len2
+                        size_t nb = (qn_mu - 1) / len2 + 1;
+#ifdef DIV_MU_NB_DELTA
+                        // 实验开关: 强制多切 DELTA 块 —— 用来测"倒数变便宜 vs 块数变多"的权衡
+                        nb += (size_t)(DIV_MU_NB_DELTA);
+#else
+                        // ================= D13: nb 代价模型 =================
+                        // GMP 的 nb = ceil(qn/len2) 只是「in <= len2」的**可行性下界**, 没有任何
+                        // 代价比较。在本项目的**离散档位阶梯** {2^k, 3*2^k} 上这会踩坑:
+                        // in 稍微偏大就把 Fi 顶上一个档位, 而 Fi 同时驱动
+                        //   (a) 整个 Newton 倒数, 以及 (b) **每个块的第一次乘法**
+                        //       (absDivNewtonWithInvFast 的 fftMulPre 用的是 inv_float_len!)
+                        // 所以 Fi 掉一档的收益常常远大于多切一块的开销。
+                        //
+                        // 实测锚点 a_max_b_random_02 (len1=500001, len2=206025):
+                        //   nb=2: in=146988 -> 2*in+1=293977 -> Fi=393216 (浪费 33.7%)
+                        //   nb=3: in= 97992 -> 2*in+1=195985 -> Fi=196608 (浪费  0.3%)
+                        //   块数 2->3 (+50%), 但倒数 26.4->14.0 ms, 总耗时 -21.6%。
+                        //
+                        // 代价模型 (cyclic 情形, INVPROF 逐层标定):
+                        //   cost = A*W(Fi) + W(Fi) + W(Fc) + nblk*(2W(Fi) + 2W(Fc)),  W(N)=N*log2 N
+                        //   A≈6.8 = Newton 倒数相对「顶层一次变换」的倍数 (实测 6.8~7.0)
+                        // 适用域: 仅大规模 (in>=16384)。小规模 (burnikel/r_nearly_zero/medium,
+                        //   len2<=11025) 上常数不成立, 模型会给出 -30% 的假收益而实测 0% ->
+                        //   直接门限排除, 保持 GMP 原行为。全 26 例实测 argmin 在门限内 100% 命中。
+                        // 安全边际: 只有当候选 cost < 0.95*cost(nb_min) 才偏离 GMP 下界,
+                        //   避免 length_ratio_integer_03 那种 0.99 平局被噪声带偏 (实测 +3.5%)。
+                        // 正确性: nb 是纯自由参数 (in 仍 <= len2, 下游一切不变),
+                        //   delta 0..4 全 26 例逐字节一致 -> 零风险。
+#ifndef DIV_MU_NB_MODEL_OFF
+                        {
+                            const size_t in_nat = (qn_mu - 1) / nb + 1;
+                            if (in_nat >= 16384)
+                            {
+                                // D16: 代价函数抽到 muBlockCost (与第二分支共用同一份口径)
+                                auto cost_of = [&](size_t nbc) -> double {
+                                    return muBlockCost(qn_mu, len2, (qn_mu - 1) / nbc + 1);
+                                };
+                                const double base = cost_of(nb);
+                                size_t best_nb = nb;
+                                double best_c = base;
+                                for (size_t c = nb + 1; c <= nb + 4; c++)
+                                {
+                                    const double cc = cost_of(c);
+                                    if (cc < best_c) { best_c = cc; best_nb = c; }
+                                }
+                                if (best_nb != nb && best_c < base * 0.95) nb = best_nb;
+                            }
+                        }
+#endif
+#endif
+                        mu_in = (qn_mu - 1) / nb + 1;
                     }
                     else if (3 * qn_mu > len2)
                     {
                         // 自适应 mu_in 选择: 比较 2块 vs 4块 的 divisor FFT size
                         // profiling 发现: blocks loop FFT 与 in 有关 (非原注释所述"无关")
-                        // 当 4块的 int_ceil2(len2+in4) < 2块的 int_ceil2(len2+in2) 时,
+                        // 当 4块的 fft_ceil(len2+in4) < 2块的 fft_ceil(len2+in2) 时,
                         //   FFT size 减半的收益 > 块数翻倍的开销, 用 4块
                         // 否则用 2块, 避免无效增加块数
                         size_t in2 = (qn_mu - 1) / 2 + 1;
@@ -3869,9 +6339,37 @@ namespace hint
 #elif defined(DIV_MU_IN_HALF)
                         mu_in = in2;  // 强制 2 块 (旧版 default)
 #else
-                        size_t div_fl2 = int_ceil2(len2 + in2);
-                        size_t div_fl4 = int_ceil2(len2 + in4);
+                        size_t div_fl2 = fft_ceil_lin_q(len2 + in2);
+                        size_t div_fl4 = fft_ceil_lin_q(len2 + in4);
                         mu_in = (div_fl4 < div_fl2) ? in4 : in2;
+                        // ★ D16: 这个 2-vs-4 的判据只看 Fl = fft_ceil(len2+in), 完全无视
+                        //   (a) Fi = fft_ceil(2*in+1) —— 它同时驱动整个 Newton 倒数**和**
+                        //       每块的第一次乘法, 是真正的双重杠杆;
+                        //   (b) 走 cyclic 时第二次乘法用的是 Fc≈Fl/2 而不是 Fl。
+                        //   => 判据与真实成本脱节。用与第一分支同一份 muBlockCost 重选。
+                        //   实测锚点 length_ratio_integer_00 (len1=333334, len2=166667,
+                        //   qn_mu=166667 == len2 故落在本分支):
+                        //     旧: in2=83334 (2块), Fi=196608, cost 5.81e7
+                        //     新: nb=3 -> in=55556, Fi=131072 (降一档!), cost 5.50e7
+                        //     ratio 0.946 < 0.95 -> 触发切换。
+                        //   门限/边际与第一分支一致: 仅大规模 (>=16384) 生效, 且必须
+                        //   优于原选择 5% 以上才偏离, 小用例保持 GMP 原行为。
+#ifndef DIV_MU_NB_MODEL_OFF
+                        if (mu_in >= 16384)
+                        {
+                            const double base = muBlockCost(qn_mu, len2, mu_in);
+                            size_t best_in = mu_in;
+                            double best_c = base;
+                            for (size_t nbc = 2; nbc <= 8; nbc++)
+                            {
+                                size_t inc = (qn_mu - 1) / nbc + 1;
+                                if (inc > len2) inc = len2;
+                                const double cc = muBlockCost(qn_mu, len2, inc);
+                                if (cc < best_c) { best_c = cc; best_in = inc; }
+                            }
+                            if (best_in != mu_in && best_c < base * 0.95) mu_in = best_in;
+                        }
+#endif
 #endif
                     }
                     else
@@ -3884,15 +6382,17 @@ namespace hint
                     // FFT 精度限制: in < 64 时 FFT 点数少, 浮点舍入差异(LC g++ 11.4)可能导致
                     //   qhat 最高位 ±1 偏差 → B^this_in 级别误差, r-based 修正循环无法处理
                     //   burnikel_ziegler_bound 用例(in=22/52)在 LC 上触发此问题
-                    bool ab_safe = (mu_in < len2) || ((quot_span.size + mu_in - 1) / mu_in <= 10);
-                    if (mu_in <= len2 && ab_safe && mu_in >= 64)
-                    {
-                        absDivMu(dividend_span, divisor_span, quot_span, mu_in);
-                    }
-                    else
-                    {
-                        absDivNewtonCore2(dividend_span, divisor_span, quot_span);
-                    }
+                    // D4: 去除 Core2 兜底 — 多块除法一律走 absDivMu.
+                    //   allow_cyclic: 仅当自然 mu_in>=64 (D3 已验证 cyclic 安全) 才用半尺寸循环卷积;
+                    //     自然 mu_in<64 (如 burnikel_ziegler_bound in=22/52) 走精确线性卷积, 避免 cyclic
+                    //     unwrap 在对抗性余数下出错 —— 这正是原 Core2 兜底所掩盖的 latent bug.
+                    //   in 钳制 [64,len2]: 地板 64 避免 in 过小导致"多小块"反而比 Core2 慢; 封顶 len2 是结构限制.
+                    //   正确性: in>=块长 → Newton 商误差界 qhat∈±1; 线性卷积精确; cyclic 仅对 mu_in>=64 启用(已验证).
+                    size_t in_used = mu_in;
+                    if (in_used > len2) in_used = len2;
+                    bool allow_cyclic = (mu_in >= 64);
+                    if (in_used < 64)   in_used = 64;
+                    absDivMu(dividend_span, divisor_span, quot_span, in_used, allow_cyclic);
                 }
                 dividend_norm.removeLeadingZero();
                 
@@ -4274,56 +6774,6 @@ namespace {
         return offset;
     }
 
-    // 从 iCursor 解析一个 Integer (支持负号), 推进 iCursor 到下一个 token
-    static inline void parseInteger(hint::Integer &out) {
-        const char *start = iCursor;
-        size_t len = swarTokenLen(iCursor);
-        out.fromCharRange(start, start + len);
-        iCursor += len;
-        // 跳过单个分隔符 (空格/换行)
-        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
-    }
-
-    // === ADD small_00 fast path: T=200000, digits 1-18 (int64) ===
-    // OPT: SWAR 8-byte digit validation + 4-byte grouped parse
-    static inline bool tryParseI64(const char *start, size_t len, int64_t &val) {
-        if (len == 0 || len > 19) return false;
-        bool neg = false;
-        size_t i = 0;
-        if (start[0] == '-') {
-            neg = true;
-            i = 1;
-            if (len == 1) return false;
-        }
-        size_t digit_len = len - i;
-        if (digit_len == 0 || digit_len > 18) return false;
-        // SWAR digit validation: 8 bytes at a time
-        // byte b is digit iff (b - 0x30) < 10; check via (sub + 0x76) bit7
-        size_t j = i;
-        while (j + 8 <= len) {
-            uint64_t data;
-            std::memcpy(&data, start + j, 8);
-            uint64_t sub = data - 0x3030303030303030ULL;
-            uint64_t mask = (sub + 0x7676767676767676ULL) & 0x8080808080808080ULL;
-            if (mask) return false;
-            j += 8;
-        }
-        for (; j < len; j++) {
-            if (start[j] < '0' || start[j] > '9') return false;
-        }
-        // 4-byte grouped parse (str4toi reduces 64-bit multiply count)
-        int64_t v = 0;
-        while (len - i >= 4) {
-            v = v * 10000 + hint::str4toi(start + i);
-            i += 4;
-        }
-        while (i < len) {
-            v = v * 10 + (start[i] - '0');
-            i++;
-        }
-        val = neg ? -v : v;
-        return true;
-    }
     // Unchecked variant: skips digit validation (caller guarantees digits)
     // Used when readToken already verified token boundaries on well-formed input
     static inline bool tryParseI64Unchecked(const char *start, size_t len, int64_t &val) {
@@ -4349,35 +6799,6 @@ namespace {
         }
         val = neg ? -v : v;
         return true;
-    }
-
-    // SWAR 4-byte ASCII digits to uint32 (0-9999), pure arithmetic (no lookup table)
-    // Based on Daniel Lemire's parse technique: mask nibbles, then pair/quad combine
-    //   v = [d0, d1, d2, d3] (each byte 0-9 after & 0x0F)
-    //   *2561  -> byte i = d[i]*1 + d[i-1]*10  (pairs combined)
-    //   *6553601 -> word i = pair[i] + pair[i-1]*100  (quads combined)
-    static inline uint32_t parse4SWAR(const char *s) {
-        uint32_t v;
-        std::memcpy(&v, s, 4);
-        v = (v & 0x0F0F0F0Fu) * 2561u;
-        v = ((v >> 8) & 0x00FF00FFu) * 6553601u;
-        return (v >> 16) & 0xFFFFu;
-    }
-
-    // Parse 1-18 digit positive integer, no validation (caller guarantees all digits, no '-')
-    // Uses SWAR arithmetic (parse4SWAR) instead of 64KB lookup table (str4toi)
-    static inline int64_t parseI64Positive(const char *s, size_t len) {
-        int64_t v = 0;
-        size_t i = 0;
-        while (len - i >= 4) {
-            v = v * 10000 + parse4SWAR(s + i);
-            i += 4;
-        }
-        while (i < len) {
-            v = v * 10 + (s[i] - '0');
-            i++;
-        }
-        return v;
     }
 
     // SWAR parse 8 ASCII digits from uint64 value (no memcpy needed)
@@ -4523,381 +6944,67 @@ namespace {
             oCursor += 4;
         }
     }
-
-    // 从 iCursor 读 token (不解析), 推进游标, 返回 token 起始指针和长度
-    static inline void readToken(const char *&ptr, size_t &len) {
-        ptr = iCursor;
-        len = swarTokenLen(iCursor);
-        iCursor += len;
-        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
-    }
 }
-#if defined(HINT_OP_ADD)
-int main() {
-#ifdef PROFILE_DIV
-    clock_t _c0 = clock();
-    PROF_PRINT("[ADD] static_init(from clock)=%.2fms\n", double(_c0) * 1000.0 / CLOCKS_PER_SEC);
-#endif
-    initInput();
-    size_t t = 0;
-    while (iCursor < iEnd && *iCursor >= '0' && *iCursor <= '9') {
-        t = t * 10 + size_t(*iCursor++ - '0');
-    }
-    if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
-
-    hint::Integer a, b;
-#ifdef BENCH_INTERNAL
-    // 内部计时模式: 读1对, 循环计算 N 次, 每次单独计时
-    auto tp0 = std::chrono::high_resolution_clock::now();
-    parseInteger(a);
-    parseInteger(b);
-    auto tp1 = std::chrono::high_resolution_clock::now();
-    double t_parse = std::chrono::duration<double, std::milli>(tp1 - tp0).count();
-    // warmup
-    hint::Integer c;
-    for (int i = 0; i < 3; i++) { c = a; c += b; }
-    const int N = 20;
-    double times[20];
-    double total = 0;
-    for (int i = 0; i < N; i++) {
-        c = a;
-        auto t0 = std::chrono::high_resolution_clock::now();
-        c += b;
-        auto t1 = std::chrono::high_resolution_clock::now();
-        times[i] = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        total += times[i];
-    }
-    std::sort(times, times + N);
-    auto tw0 = std::chrono::high_resolution_clock::now();
-    writeHint(c);
-    *oCursor++ = '\n';
-    flushOutput();
-    auto tw1 = std::chrono::high_resolution_clock::now();
-    double t_write = std::chrono::duration<double, std::milli>(tw1 - tw0).count();
-    fprintf(stderr, "PARSE: %.3f  ADD_MIN: %.3f  ADD_MED: %.3f  WRITE: %.3f\n",
-            t_parse, times[0], times[N/2], t_write);
-    return 0;
-#endif
-#ifdef PROFILE_DIV
-    double t_read = 0, t_parse = 0, t_write = 0, t_nl = 0;
-    auto _t0 = std::chrono::high_resolution_clock::now();
-#endif
-    while (t--) {
-        // small_00 fast path: parse + boundary detection in one pass
-        // Uses parsePositiveUntilNondigit to merge readToken + parse
-#ifdef PROFILE_DIV
-        auto _p0 = std::chrono::high_resolution_clock::now();
-#endif
-        const char *sa = iCursor;
-        size_t la;
-        int64_t va = parsePositiveUntilNondigit(sa, la);
-        iCursor = sa + la;
-        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;  // skip space
-
-        const char *sb = iCursor;
-        size_t lb;
-        int64_t vb = parsePositiveUntilNondigit(sb, lb);
-        iCursor = sb + lb;
-        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;  // skip newline
-#ifdef PROFILE_DIV
-        auto _p1 = std::chrono::high_resolution_clock::now();
-        t_read += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
-#endif
-        // Check if both tokens are positive <= 18 digits (fast path)
-        if (la > 0 && la <= 18 && lb > 0 && lb <= 18) {
-            // va + vb < 2*10^18 < INT64_MAX, no overflow
-#ifdef PROFILE_DIV
-            auto _p2 = std::chrono::high_resolution_clock::now();
-            t_parse += std::chrono::duration<double, std::milli>(_p2 - _p1).count();
-#endif
-            writeI64(va + vb);
-#ifdef PROFILE_DIV
-            _p1 = std::chrono::high_resolution_clock::now();
-            t_write += std::chrono::duration<double, std::milli>(_p1 - _p2).count();
-#endif
-        } else {
-            // Slow path: negative, or > 18 digits → use Integer
-            // Re-read tokens via readToken for correct handling (handles '-' etc)
-            // sa/sb/la/lb already point to correct positions
-            if (sa[0] != '-' && sb[0] != '-' && la <= 18 && lb <= 18) {
-                // shouldn't reach here (caught by fast path), but be safe
-                writeI64(va + vb);
-            } else if (tryParseI64Unchecked(sa, la, va) && tryParseI64Unchecked(sb, lb, vb)) {
-                writeI64(va + vb);
-            } else {
-                a.fromCharRange(sa, sa + la);
-                b.fromCharRange(sb, sb + lb);
-                a += b;
-                writeHint(a);
-            }
-#ifdef PROFILE_DIV
-            _p1 = std::chrono::high_resolution_clock::now();
-            t_write += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
-            t_parse += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
-#endif
-        }
-        *oCursor++ = '\n';
-#ifdef PROFILE_DIV
-        auto _p4 = std::chrono::high_resolution_clock::now();
-        t_nl += std::chrono::duration<double, std::milli>(_p4 - _p1).count();
-#endif
-    }
-#ifdef PROFILE_DIV
-    auto _t1 = std::chrono::high_resolution_clock::now();
-#endif
-    flushOutput();
-#ifdef PROFILE_DIV
-    auto _t2 = std::chrono::high_resolution_clock::now();
-    double t_loop = std::chrono::duration<double, std::milli>(_t1 - _t0).count();
-    double t_flush = std::chrono::duration<double, std::milli>(_t2 - _t1).count();
-    FILE *_pf = std::fopen("prof_result.txt", "w");
-    fprintf(_pf, "[ADD profile] read=%.3fms parse=%.3fms write=%.3fms nl=%.3fms loop=%.3fms flush=%.3fms total=%.3fms\n",
-            t_read, t_parse, t_write, t_nl, t_loop, t_flush, t_loop + t_flush);
-    std::fclose(_pf);
-#endif
-    return 0;
-}
-#elif defined(HINT_OP_MUL)
-int main() {
-#ifdef BENCH_INTERNAL
-    auto _t_main_start = std::chrono::high_resolution_clock::now();
-#endif
-    initInput();
-#ifdef BENCH_INTERNAL
-    auto _t_after_init = std::chrono::high_resolution_clock::now();
-#endif
-    size_t t = 0;
-    while (iCursor < iEnd && *iCursor >= '0' && *iCursor <= '9') {
-        t = t * 10 + size_t(*iCursor++ - '0');
-    }
-    if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
-    hint::Integer a, b;
-#ifdef BENCH_INTERNAL
-    // 内部计时模式: 读1对, 循环计算 N 次, 每次单独计时
-    // 同时测 parse 和 write, 定位 I/O 瓶颈
-    double t_parse = 0, t_write = 0;
-    auto tp0 = std::chrono::high_resolution_clock::now();
-    parseInteger(a);
-    parseInteger(b);
-    auto tp1 = std::chrono::high_resolution_clock::now();
-    t_parse = std::chrono::duration<double, std::milli>(tp1 - tp0).count();
-    // warmup
-    hint::Integer c;
-    for (int i = 0; i < 3; i++) { c = a; c *= b; }
-    const int N = 30;
-    double times[30];
-    double total = 0;
-    for (int i = 0; i < N; i++) {
-        c = a;
-        auto t0 = std::chrono::high_resolution_clock::now();
-        c *= b;
-        auto t1 = std::chrono::high_resolution_clock::now();
-        times[i] = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        total += times[i];
-    }
-    std::sort(times, times + N);
-    auto tw0 = std::chrono::high_resolution_clock::now();
-    writeHint(c);
-    *oCursor++ = '\n';
-    auto tw1 = std::chrono::high_resolution_clock::now();
-    flushOutput();
-    auto tw2 = std::chrono::high_resolution_clock::now();
-    double t_writeTo = std::chrono::duration<double, std::milli>(tw1 - tw0).count();
-    double t_flush = std::chrono::duration<double, std::milli>(tw2 - tw1).count();
-    t_write = t_writeTo + t_flush;
-    auto _t_main_end = std::chrono::high_resolution_clock::now();
-    double t_init = std::chrono::duration<double, std::milli>(_t_after_init - _t_main_start).count();
-    double t_wall = std::chrono::duration<double, std::milli>(_t_main_end - _t_main_start).count();
-    // 输出: INIT / PARSE / MUL_MIN / MUL_MED / MUL_AVG / WRITE_TO / FLUSH / WALL
-    fprintf(stderr, "INIT: %.3f  PARSE: %.3f  MUL_MIN: %.3f  MUL_MED: %.3f  MUL_AVG: %.3f  WRITE_TO: %.3f  FLUSH: %.3f  WALL: %.3f\n",
-            t_init, t_parse, times[0], times[N/2], total/N, t_writeTo, t_flush, t_wall);
-    return 0;
-#endif
-    while (t--) {
-        parseInteger(a);
-        parseInteger(b);
-        a *= b;
-        writeHint(a);
-        *oCursor++ = '\n';
-    }
-    flushOutput();
-    return 0;
-}
-#elif defined(HINT_OP_DIV)
 int main() {
 #ifdef PROFILE_DIV
     setvbuf(stderr, NULL, _IONBF, 0);
 #endif
-    initInput();
+    { TP_DECL(rd); initInput(); TP_ADD(rd); }
     size_t t = 0;
     while (iCursor < iEnd && *iCursor >= '0' && *iCursor <= '9') {
         t = t * 10 + size_t(*iCursor++ - '0');
     }
     if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
     hint::Integer a, b, q, r;
+    int64_t va, vb;
     while (t--) {
-        parseInteger(a);
-        parseInteger(b);
-        a.absDivRem(b, q, r);
-        writeHint(q);
-        *oCursor++ = ' ';
-        writeHint(r);
+        const char *sa = iCursor;
+        size_t la;
+        if (sa < iEnd && *sa == '-') {
+            la = swarTokenLen(iCursor);
+            iCursor += la;
+        } else {
+            va = parsePositiveUntilNondigit(sa, la);
+            iCursor = sa + la;
+        }
+        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
+        const char *sb = iCursor;
+        size_t lb;
+        if (sb < iEnd && *sb == '-') {
+            lb = swarTokenLen(iCursor);
+            iCursor += lb;
+        } else {
+            vb = parsePositiveUntilNondigit(sb, lb);
+            iCursor = sb + lb;
+        }
+        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
+        // Fast path: both positive <= 18 digits, b != 0
+        if (la > 0 && la <= 18 && lb > 0 && lb <= 18 && sa[0] != '-' && sb[0] != '-' && vb != 0) {
+            writeI64(va / vb);
+            *oCursor++ = ' ';
+            writeI64(va % vb);
+        } else if (tryParseI64Unchecked(sa, la, va) && tryParseI64Unchecked(sb, lb, vb) && vb != 0) {
+            // Slow int64 path: supports negatives, any int64 range
+            writeI64(va / vb);
+            *oCursor++ = ' ';
+            writeI64(va % vb);
+        } else {
+            // BigInt path
+            { TP_DECL(parse);
+              a.fromCharRange(sa, sa + la);
+              b.fromCharRange(sb, sb + lb);
+              TP_ADD(parse); }
+            { TP_DECL(div);
+              a.absDivRem(b, q, r);
+              TP_ADD(div); }
+            { TP_DECL(print);
+              writeHint(q);
+              *oCursor++ = ' ';
+              writeHint(r);
+              TP_ADD(print); }
+        }
         *oCursor++ = '\n';
     }
-    flushOutput();
+    { TP_DECL(wr); flushOutput(); TP_ADD(wr); }
     return 0;
 }
-#elif defined(HINT_OP_TESTMOD)
-// 测试 fftMulModBm1 正确性: 输入 t 组 (a, b, m), 对比 R1=fftMulModBm1 vs R2=线性卷积折叠
-int main() {
-    using namespace hint;
-    using Limb = Integer::Limb;
-    using Span = Integer::Span;
-    int t;
-    if (scanf("%d", &t) != 1) return 1;
-    int pass_cnt = 0, fail_cnt = 0;
-    while (t--) {
-        static char buf_a[1 << 21], buf_b[1 << 21];
-        size_t m;
-        if (scanf("%s %s %zu", buf_a, buf_b, &m) != 3) return 1;
-        // 修复: buf_a 是 char[N], 模板构造函数 Integer(const T&) [T=char[N]] 优先于
-        // Integer(const char*), 导致 sign=input<0 指针比较错误. 用 const char* 中转.
-        const char *sa = buf_a, *sb = buf_b;
-        Integer a(sa), b(sb);
-        size_t pa = a.length(), pb = b.length();
-
-        // R1 = fftMulModBm1(a, b, m)
-        std::vector<Limb> r1(m, 0);
-        Span r1_span(r1.data(), m);
-        Integer::fftMulModBm1(a.getView(), b.getView(), m, r1_span);
-
-        // P = a * b (full convolution)
-        std::vector<Limb> pbuf(pa + pb, 0);
-        Span p_span(pbuf.data(), pa + pb);
-        Integer::absMul(a.getView(), b.getView(), p_span);
-        size_t plen = count_true_length(pbuf.data(), pa + pb);
-
-        // R2 = fold P to m limbs + cyclic carry propagation
-        std::vector<Limb> r2(m, 0);
-        uint64_t carry = 0;
-        for (size_t i = 0; i < m; i++) {
-            uint64_t s = carry + (i < plen ? uint64_t(pbuf[i]) : 0);
-            if (i + m < plen) s += pbuf[i + m];
-            uint64_t q = s / Integer::BASE;
-            r2[i] = Limb(s - q * Integer::BASE);
-            carry = q;
-        }
-        while (carry > 0) {
-            bool wrapped = true;
-            for (size_t j = 0; j < m && carry > 0; j++) {
-                uint64_t s = uint64_t(r2[j]) + carry;
-                uint64_t q = s / Integer::BASE;
-                r2[j] = Limb(s - q * Integer::BASE);
-                carry = q;
-                if (carry == 0) { wrapped = false; break; }
-            }
-            if (wrapped && carry == 1) {
-                bool allzero = true;
-                for (size_t j = 0; j < m; j++) if (r2[j]) { allzero = false; break; }
-                if (allzero) { carry = 0; }
-            }
-        }
-        size_t r2_len = count_true_length(r2.data(), m);
-        size_t r1_len = count_true_length(r1.data(), m);
-
-        bool pass = (r1_len == r2_len);
-        if (pass) {
-            for (size_t i = 0; i < r1_len; i++) {
-                if (r1[i] != r2[i]) { pass = false; break; }
-            }
-        }
-        if (pass) {
-            pass_cnt++;
-            printf("PASS m=%zu pa=%zu pb=%zu plen=%zu\n", m, pa, pb, plen);
-        } else {
-            fail_cnt++;
-            printf("FAIL m=%zu pa=%zu pb=%zu plen=%zu r1_len=%zu r2_len=%zu\n",
-                   m, pa, pb, plen, r1_len, r2_len);
-            printf("R1:"); for (size_t i = 0; i < r1_len && i < 10; i++) printf(" %u", r1[i]); printf("\n");
-            printf("R2:"); for (size_t i = 0; i < r2_len && i < 10; i++) printf(" %u", r2[i]); printf("\n");
-        }
-    }
-    printf("=== %d PASS, %d FAIL ===\n", pass_cnt, fail_cnt);
-    return 0;
-}
-#elif defined(HINT_OP_TESTNEWTON)
-// 测试 absInvNewtonGMP vs absInvNewton 正确性 (fallback 模式下应完全一致)
-// 输入: 第一行 t (组数), 然后每组 2 行 (a 和 b 的十进制字符串)
-// a 仅用于标记测试规模, 实际只用 b 作为 divisor 计算逆
-// 输出: 每组 PASS/FAIL, 末尾汇总
-int main() {
-    using namespace hint;
-    using Limb = Integer::Limb;
-    using Span = Integer::Span;
-    using View = Integer::View;
-
-    int t;
-    if (scanf("%d", &t) != 1) return 1;
-    int pass_cnt = 0, fail_cnt = 0;
-    while (t--) {
-        static char buf_a[1 << 21], buf_b[1 << 21];
-        if (scanf("%s %s", buf_a, buf_b) != 2) return 1;
-        // buf_a/buf_b 是 char[N], 模板构造函数 Integer(const T&) 会优先匹配,
-        // 导致 sign=input<0 指针比较错误. 用 const char* 中转 (对齐 TESTMOD 修复)
-        const char *sa = buf_a, *sb = buf_b;
-        Integer a_int(sa), b_int(sb);
-        size_t k = b_int.length();
-        if (k == 0) {
-            printf("SKIP (b=0)\n");
-            continue;
-        }
-
-        // 分配两个独立 inv 缓冲区 (长度 k+1, 与 absInvNewton 约定一致)
-        std::vector<Limb> inv1_buf(k + 1, 0), inv2_buf(k + 1, 0);
-        Span inv1_span(inv1_buf.data(), k + 1);
-        Span inv2_span(inv2_buf.data(), k + 1);
-        View bv = b_int.getView();
-
-        // 分别调用 absInvNewton (基线) 和 absInvNewtonGMP (待测, 当前 fallback)
-        Integer::absInvNewton(bv, inv1_span);
-        Integer::absInvNewtonGMP(bv, inv2_span);
-
-        // 对比结果 (逐 limb 比较, 用 count_true_length 去前导零)
-        size_t len1 = count_true_length(inv1_buf.data(), k + 1);
-        size_t len2 = count_true_length(inv2_buf.data(), k + 1);
-        bool pass = (len1 == len2);
-        if (pass) {
-            for (size_t i = 0; i < len1; i++) {
-                if (inv1_buf[i] != inv2_buf[i]) { pass = false; break; }
-            }
-        }
-        if (pass) {
-            pass_cnt++;
-            printf("PASS k=%zu inv_len=%zu (a_digits=%zu b_digits=%zu)\n",
-                   k, len1, a_int.lengthBase10(), b_int.lengthBase10());
-        } else {
-            fail_cnt++;
-            printf("FAIL k=%zu len1=%zu len2=%zu (a_digits=%zu b_digits=%zu)\n",
-                   k, len1, len2, a_int.lengthBase10(), b_int.lengthBase10());
-            printf("INV1 lo:"); for (size_t i = 0; i < len1 && i < 10; i++) printf(" %u", inv1_buf[i]); printf("\n");
-            printf("INV2 lo:"); for (size_t i = 0; i < len2 && i < 10; i++) printf(" %u", inv2_buf[i]); printf("\n");
-            printf("INV1 hi:"); for (size_t i = len1 > 10 ? len1 - 10 : 0; i < len1; i++) printf(" %u", inv1_buf[i]); printf("\n");
-            printf("INV2 hi:"); for (size_t i = len2 > 10 ? len2 - 10 : 0; i < len2; i++) printf(" %u", inv2_buf[i]); printf("\n");
-            // 找到第一个不同的 limb
-            size_t max_len = std::max(len1, len2);
-            for (size_t i = 0; i < max_len; i++) {
-                Limb v1 = i < len1 ? inv1_buf[i] : 0;
-                Limb v2 = i < len2 ? inv2_buf[i] : 0;
-                if (v1 != v2) {
-                    printf("DIFF @%zu: inv1=%u inv2=%u\n", i, v1, v2);
-                    break;
-                }
-            }
-        }
-    }
-    printf("=== %d PASS, %d FAIL ===\n", pass_cnt, fail_cnt);
-    return 0;
-}
-#else
-#error "Must define HINT_OP_ADD, HINT_OP_MUL, HINT_OP_DIV, HINT_OP_TESTMOD, or HINT_OP_TESTNEWTON"
-#endif

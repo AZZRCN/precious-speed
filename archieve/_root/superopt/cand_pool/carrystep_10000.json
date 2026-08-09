@@ -1,0 +1,35 @@
+{
+  "name": "carrystep_10000",
+  "saved": "2026-08-07 18:40:35",
+  "verify": {
+    "kind": "carry",
+    "vbits": 45,
+    "cbits": 32,
+    "d": 10000
+  },
+  "n_cands": 2,
+  "cands": [
+    {
+      "cyc": 8.0,
+      "cp": 8,
+      "res": 4.0,
+      "uops": 6,
+      "insns": 5,
+      "exprs": {
+        "q": "mulhi(1844674407370956,add(v,c))",
+        "r": "mulhi(10000,mul(1844674407370956,add(v,c)))"
+      }
+    },
+    {
+      "cyc": 9.0,
+      "cp": 9,
+      "res": 3.0,
+      "uops": 5,
+      "insns": 4,
+      "exprs": {
+        "q": "mulhi(1844674407370956,add(v,c))",
+        "r": "sub(add(v,c),mul(10000,mulhi(1844674407370956,add(v,c))))"
+      }
+    }
+  ]
+}

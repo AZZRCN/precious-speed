@@ -1,0 +1,36 @@
+reps=15 warm=2  bins=d38,d39,d34
+case                                  d38        d39        d34     r_d39     r_d34
+length_ratio_integer_02             30.43      28.17      30.21     0.926     0.995
+length_ratio_integer_00             29.88      28.71      30.43     0.965     1.003
+r_nearly_zero_01                    28.87      28.77      30.11     0.991     1.039
+burnikel_ziegler_bound_02           28.42      27.93      29.91     0.984     1.065
+length_ratio_integer_01             28.25      26.33      28.72     0.932     1.008
+length_ratio_integer_03             27.78      25.88      27.98     0.929     1.018
+length_ratio_integer_05             27.13      25.52      27.56     0.963     1.021
+burnikel_ziegler_bound_00           25.79      26.35      27.85     1.013     1.058
+length_ratio_integer_04             25.53      23.94      26.00     0.944     1.014
+a_max_b_random_02                   24.06      22.76      24.16     0.947     1.009
+a_max_b_random_01                   23.67      22.55      23.80     0.945     1.038
+burnikel_ziegler_bound_03           23.50      23.50      24.91     1.007     1.052
+large_01                            23.28      21.82      24.02     0.931     1.024
+medium_02                           22.77      22.26      23.68     0.988     1.048
+burnikel_ziegler_bound_01           22.23      21.96      23.37     0.991     1.041
+large_00                            21.68      20.88      21.96     0.960     1.032
+r_nearly_zero_02                    20.63      19.60      20.79     0.956     1.016
+medium_01                           20.21      20.30      20.81     1.007     1.024
+a_max_b_random_00                   16.71      15.73      16.76     0.945     1.008
+medium_00                           16.34      16.26      16.43     0.998     0.998
+r_nearly_zero_00                    16.13      15.91      15.99     0.991     0.993
+small_00                            12.31      12.36      12.26     0.995     1.008
+max_01                               5.19       4.94       4.98     0.996     1.005
+max_02                               3.50       3.48       4.34     0.995     1.216
+max_00                               3.31       3.18       3.30     0.970     0.979
+example_00                           1.45       1.47       1.46     0.971     0.979
+
+SCORE(max) d38      =    30.43 ms   @length_ratio_integer_02
+SCORE(max) d39      =    28.77 ms   @r_nearly_zero_01
+SCORE(max) d34      =    30.43 ms   @length_ratio_integer_00
+
+median-of-ratios d39      vs d38      = 0.9710  (min 0.926 max 1.013)
+median-of-ratios d34      vs d38      = 1.0173  (min 0.979 max 1.216)
+DONE

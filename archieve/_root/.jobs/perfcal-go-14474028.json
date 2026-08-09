@@ -1,0 +1,17 @@
+{
+ "id": "perfcal-go-14474028",
+ "name": "perfcal-go",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "perf_cal.py",
+  "go"
+ ],
+ "pid": 13120,
+ "started": 1786114474.0372112,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786114478.7039688,
+ "out": "D:\\precious_speed\\.jobs\\perfcal-go-14474028.out"
+}

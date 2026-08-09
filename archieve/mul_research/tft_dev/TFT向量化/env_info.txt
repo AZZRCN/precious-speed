@@ -1,0 +1,4 @@
+Compiler: g++ 15.2.0 (MinGW-Builds, x86_64-win32-seh-rev0)
+CPU: Intel64 Family 6 Model 140 Stepping 1, GenuineIntel
+Compile Date: 2026-07-31
+Options: -std=c++20 -O2 -march=native

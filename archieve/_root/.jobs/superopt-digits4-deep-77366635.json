@@ -1,0 +1,16 @@
+{
+ "id": "superopt-digits4-deep-77366635",
+ "name": "superopt-digits4-deep",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "run_digits4_deep.py"
+ ],
+ "pid": 1716,
+ "started": 1786077366.642014,
+ "timeout": 4200.0,
+ "cwd": "D:/precious_speed/superopt",
+ "state": "done",
+ "rc": null,
+ "ended": 1786080967.0402222,
+ "out": "D:\\precious_speed\\.jobs\\superopt-digits4-deep-77366635.out"
+}

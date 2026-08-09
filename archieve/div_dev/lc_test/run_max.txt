@@ -1,0 +1,19 @@
+﻿=== Phase 1: Compilation ===
+  correct.exe: rc=0
+  checker.exe: rc=0
+  small.exe: OK
+  medium.exe: OK
+  large.exe: OK
+  max.exe: OK
+  a_max_b_random.exe: OK
+  r_nearly_zero.exe: OK
+  length_ratio_integer.exe: OK
+  burnikel_ziegler_bound.exe: OK
+
+=== Phase 2: Generate + Test ===
+
+[max] SKIP (--max not set, 2M digits too slow)
+
+=== Summary ===
+Total: 0, Passed: 0, Failed: 0
+Max digits seen: 0

@@ -1,0 +1,17 @@
+{
+ "id": "perfcal-up-14347726",
+ "name": "perfcal-up",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "perf_cal.py",
+  "up"
+ ],
+ "pid": 11572,
+ "started": 1786114347.7366052,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786114360.2008333,
+ "out": "D:\\precious_speed\\.jobs\\perfcal-up-14347726.out"
+}

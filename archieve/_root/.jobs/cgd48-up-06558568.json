@@ -1,0 +1,17 @@
+{
+ "id": "cgd48-up-06558568",
+ "name": "cgd48-up",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "cg_d48.py",
+  "up"
+ ],
+ "pid": 2636,
+ "started": 1786106558.5748057,
+ "timeout": 900.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786106569.3120024,
+ "out": "D:\\precious_speed\\.jobs\\cgd48-up-06558568.out"
+}

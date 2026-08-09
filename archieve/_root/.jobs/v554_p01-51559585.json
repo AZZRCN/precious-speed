@@ -1,0 +1,18 @@
+{
+ "id": "v554_p01-51559585",
+ "name": "v554_p01",
+ "cmd": [
+  "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe",
+  "lc_bench/d49_verify_local.py",
+  "--phase",
+  "0"
+ ],
+ "pid": 11116,
+ "started": 1786151559.5995512,
+ "timeout": 2400.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786151602.2727962,
+ "out": "D:\\precious_speed\\.jobs\\v554_p01-51559585.out"
+}

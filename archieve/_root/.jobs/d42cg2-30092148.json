@@ -1,0 +1,18 @@
+{
+ "id": "d42cg2-30092148",
+ "name": "d42cg2",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/vm/_d42_cg.py",
+  "D41",
+  "D42"
+ ],
+ "pid": 7840,
+ "started": 1786030092.155912,
+ "timeout": 9600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786030115.1182232,
+ "out": "D:\\precious_speed\\.jobs\\d42cg2-30092148.out"
+}

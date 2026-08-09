@@ -1,0 +1,17 @@
+{
+ "id": "prof-hl-12597482",
+ "name": "prof-hl",
+ "cmd": [
+  "python",
+  "prof_headline.py",
+  "D47"
+ ],
+ "pid": 3808,
+ "started": 1786112597.5017815,
+ "timeout": 1200.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786112615.917642,
+ "out": "D:\\precious_speed\\.jobs\\prof-hl-12597482.out"
+}

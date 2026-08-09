@@ -1,0 +1,151 @@
+{
+  "divmod_q": {
+    "verified": true,
+    "time": "2026-08-07 11:53",
+    "cyc": 4.0,
+    "cp": 4,
+    "res": 2.0,
+    "uops": 2,
+    "insns": 1,
+    "exprs": {
+      "q": "mulhi(s,1844674407370956)"
+    }
+  },
+  "swar3": {
+    "verified": false,
+    "time": "2026-08-07 12:23"
+  },
+  "divmod": {
+    "verified": true,
+    "time": "2026-08-07 12:08",
+    "cyc": 7.0,
+    "cp": 7,
+    "res": 4.0,
+    "uops": 4,
+    "insns": 3,
+    "exprs": {
+      "q": "mulhi(s,1844674407370956)",
+      "r": "mulhi(10000,mul(s,1844674407370956))"
+    }
+  },
+  "divmod_r": {
+    "verified": true,
+    "time": "2026-08-07 12:08",
+    "cyc": 7.0,
+    "cp": 7,
+    "res": 3.0,
+    "uops": 3,
+    "insns": 2,
+    "exprs": {
+      "r": "mulhi(10000,mul(s,1844674407370956))"
+    }
+  },
+  "divmod_p2": {
+    "verified": true,
+    "time": "2026-08-07 12:08",
+    "cyc": 1.0,
+    "cp": 1,
+    "res": 0.5,
+    "uops": 2,
+    "insns": 2,
+    "exprs": {
+      "q": "shr(s,16)",
+      "r": "and(s,65535)"
+    }
+  },
+  "carry": {
+    "verified": true,
+    "time": "2026-08-07 12:10",
+    "cyc": 8.0,
+    "cp": 8,
+    "res": 4.0,
+    "uops": 5,
+    "insns": 4,
+    "exprs": {
+      "q": "mulhi(1844674407370956,add(v,c))",
+      "r": "mulhi(10000,mul(1844674407370956,add(v,c)))"
+    }
+  },
+  "digits4": {
+    "verified": false,
+    "time": "2026-08-07 12:20"
+  },
+  "swar": {
+    "verified": true,
+    "time": "2026-08-07 12:21",
+    "cyc": 3.0,
+    "cp": 3,
+    "res": 1.0,
+    "uops": 4,
+    "insns": 4,
+    "exprs": {
+      "cout": "shr(xor(add(P,cin),lea2(P,G)),1)"
+    }
+  },
+  "swar4": {
+    "verified": true,
+    "time": "2026-08-07 12:23",
+    "cyc": 3.0,
+    "cp": 3,
+    "res": 1.0,
+    "uops": 4,
+    "insns": 4,
+    "exprs": {
+      "cout": "shr(xor(add(P,cin),lea2(P,G)),1)"
+    }
+  },
+  "carrystep_10000": {
+    "verified": true,
+    "time": "2026-08-07 18:00",
+    "n_cands": 2,
+    "cyc": 8.0,
+    "cp": 8,
+    "res": 4.0,
+    "uops": 6,
+    "insns": 5,
+    "exprs": {
+      "q": "mulhi(1844674407370956,add(v,c))",
+      "r": "mulhi(10000,mul(1844674407370956,add(v,c)))"
+    }
+  },
+  "divmod_10000_lt2p45": {
+    "verified": true,
+    "time": "2026-08-07 18:02",
+    "n_cands": 272,
+    "cyc": 4.0,
+    "cp": 4,
+    "res": 2.0,
+    "uops": 3,
+    "insns": 2,
+    "exprs": {
+      "q": "mulhi(s,1844674407370956)"
+    }
+  },
+  "divmod_2p16_lt2p45": {
+    "verified": true,
+    "time": "2026-08-07 18:02",
+    "n_cands": 94,
+    "cyc": 1.0,
+    "cp": 1,
+    "res": 0.75,
+    "uops": 3,
+    "insns": 3,
+    "exprs": {
+      "q": "shr(s,16)",
+      "r": "and(s,65535)"
+    }
+  },
+  "swar_carry16": {
+    "verified": true,
+    "time": "2026-08-07 18:03",
+    "n_cands": 15,
+    "cyc": 3.0,
+    "cp": 3,
+    "res": 1.0,
+    "uops": 4,
+    "insns": 4,
+    "exprs": {
+      "cout": "shr(xor(add(P,cin),lea2(P,G)),1)"
+    }
+  }
+}

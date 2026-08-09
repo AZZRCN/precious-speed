@@ -1,0 +1,16 @@
+{
+ "id": "cg4way-25477837",
+ "name": "cg4way",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/run_cg4way.py"
+ ],
+ "pid": 14296,
+ "started": 1786025477.8453074,
+ "timeout": 7500.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786025727.044455,
+ "out": "D:\\precious_speed\\.jobs\\cg4way-25477837.out"
+}

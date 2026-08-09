@@ -1,0 +1,17 @@
+{
+ "id": "prof-hl2-12934693",
+ "name": "prof-hl2",
+ "cmd": [
+  "python",
+  "prof_headline.py",
+  "D47"
+ ],
+ "pid": 10136,
+ "started": 1786112934.7030165,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786112942.5691116,
+ "out": "D:\\precious_speed\\.jobs\\prof-hl2-12934693.out"
+}

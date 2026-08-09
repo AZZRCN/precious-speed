@@ -1,3 +1,35 @@
+/*
+Submission #390082
+ID	Date	Problem	Lang	User	Status	Time	Memory
+390082	2026/8/2 21:52:43	
+
+Addition of Big Integers
+	C++23	(Anonymous)	AC	7 ms	9.04 Mib
+	Name	Status	Time	Memory
+	example_00	AC	1 ms	0.69 Mib
+	small_00	AC	7 ms	6.26 Mib
+	medium_00	AC	5 ms	7.26 Mib
+	medium_01	AC	4 ms	6.76 Mib
+	medium_02	AC	5 ms	7.24 Mib
+	large_00	AC	4 ms	7.04 Mib
+	large_01	AC	4 ms	7.47 Mib
+	large_02	AC	3 ms	6.01 Mib
+	max_max_00	AC	5 ms	4.64 Mib
+	max_max_01	AC	5 ms	6.26 Mib
+	max_max_02	AC	4 ms	5.84 Mib
+	max_max_03	AC	5 ms	5.81 Mib
+	max_max_04	AC	5 ms	4.55 Mib
+	max_max_05	AC	4 ms	6.33 Mib
+	max_max_06	AC	5 ms	5.30 Mib
+	max_max_07	AC	5 ms	4.63 Mib
+	sum_zero_00	AC	5 ms	7.02 Mib
+	large_small_00	AC	6 ms	9.04 Mib
+	carry_chain_00	AC	4 ms	3.79 Mib
+	carry_chain_01	AC	4 ms	4.04 Mib
+	carry_chain_02	AC	3 ms	2.76 Mib
+	carry_chain_03	AC	4 ms	3.56 Mib
+*/
+
 // AZZRCN
 // https://github.com/AZZRCN
 //
@@ -30,7 +62,6 @@
 #ifdef PROFILE_DIV
 static FILE *_prof_fp = nullptr;
 static inline void _prof_init() { if (!_prof_fp) _prof_fp = std::fopen("prof_detail.log", "w"); }
-static inline void _prof_flush() { if (_prof_fp) { std::fflush(_prof_fp); } }
 #define PROF_PRINT(...) do { _prof_init(); if (_prof_fp) std::fprintf(_prof_fp, __VA_ARGS__); } while(0)
 #else
 #define PROF_PRINT(...) ((void)0)
@@ -87,11 +118,23 @@ namespace hint
         T *allocate(size_t n)
         {
             void *p = nullptr;
-            if (posix_memalign(&p, 32, n * sizeof(T)) != 0)
-                throw std::bad_alloc();
+            #ifdef _WIN32
+                p = _aligned_malloc(n * sizeof(T), 32);
+                if (!p) throw std::bad_alloc();
+#else
+                if (posix_memalign(&p, 32, n * sizeof(T)) != 0)
+                    throw std::bad_alloc();
+#endif
             return static_cast<T *>(p);
         }
-        void deallocate(T *p, size_t) { free(p); }
+        void deallocate(T *p, size_t)
+        {
+#ifdef _WIN32
+            _aligned_free(p);
+#else
+            free(p);
+#endif
+        }
         template <typename U>
         struct rebind { using other = AlignedAlloc32<U>; };
         bool operator==(const AlignedAlloc32 &) const { return true; }
@@ -100,16 +143,6 @@ namespace hint
     template <typename T>
     using AlignedVec32 = std::vector<T, AlignedAlloc32<T>>;
 
-    template <typename T>
-    constexpr T int_floor2(T n)
-    {
-        constexpr int bits = sizeof(n) * 8;
-        for (int i = 1; i < bits; i *= 2)
-        {
-            n |= (n >> i);
-        }
-        return (n >> 1) + 1;
-    }
 
     template <typename T>
     constexpr T int_ceil2(T n)
@@ -206,34 +239,7 @@ namespace hint
         return result;
     }
 
-    constexpr int hint_popcnt(uint32_t n)
-    {
-        constexpr uint32_t mask55 = 0x55555555;
-        constexpr uint32_t mask33 = 0x33333333;
-        constexpr uint32_t mask0f = 0x0f0f0f0f;
-        constexpr uint32_t maskff = 0x00ff00ff;
-        n = (n & mask55) + ((n >> 1) & mask55);
-        n = (n & mask33) + ((n >> 2) & mask33);
-        n = (n & mask0f) + ((n >> 4) & mask0f);
-        n = (n & maskff) + ((n >> 8) & maskff);
-        return uint16_t(n) + (n >> 16);
-    }
-    constexpr int hint_popcnt(uint64_t n)
-    {
-        constexpr uint64_t mask5555 = 0x5555555555555555;
-        constexpr uint64_t mask3333 = 0x3333333333333333;
-        constexpr uint64_t mask0f0f = 0x0f0f0f0f0f0f0f0f;
-        constexpr uint64_t mask00ff = 0x00ff00ff00ff00ff;
-        constexpr uint64_t maskffff = 0x0000ffff0000ffff;
-        n = (n & mask5555) + ((n >> 1) & mask5555);
-        n = (n & mask3333) + ((n >> 2) & mask3333);
-        n = (n & mask0f0f) + ((n >> 4) & mask0f0f);
-        n = (n & mask00ff) + ((n >> 8) & mask00ff);
-        n = (n & maskffff) + ((n >> 16) & maskffff);
-        return uint32_t(n) + (n >> 32);
-    }
-
-    constexpr uint32_t bitrev32(uint32_t n)
+constexpr uint32_t bitrev32(uint32_t n)
     {
         constexpr uint32_t mask55 = 0x55555555;
         constexpr uint32_t mask33 = 0x33333333;
@@ -251,11 +257,6 @@ namespace hint
         return bitrev32(n) >> (32 - len);
     }
 
-    template <typename T>
-    void fill_zero(T begin, T end)
-    {
-        std::memset(&begin[0], 0, (end - begin) * sizeof(T));
-    }
 
     template <typename Float>
     struct Float2
@@ -472,10 +473,7 @@ namespace hint
                     table[4] = 1, table[6] = 0;
                     table[5] = std::cos(theta), table[7] = std::sin(theta);
                 }
-                void expandLog(int log_len)
-                {
-                    expand(size_t(1) << log_len);
-                }
+
                 void expand(size_t fft_len)
                 {
                     size_t cur_len = table.size() * DIV / 4;
@@ -932,17 +930,7 @@ namespace hint
             }
         }
     }
-    constexpr size_t count_base10(uint64_t num)
-    {
-        size_t count = 0;
-        while (num)
-        {
-            num /= 10;
-            count++;
-        }
-        return count;
-    }
-    // 64KB 查表法：2 字节 ASCII → 0-99 (从 fusion.cpp 移植)
+// 64KB 查表法：2 字节 ASCII → 0-99 (从 fusion.cpp 移植)
     struct ParseTable {
         uint8_t table[0x10000];
         constexpr ParseTable() : table() {
@@ -997,34 +985,7 @@ namespace hint
     }
     // OPT: AVX2 向量化 uint16→double 转换 (16 元素/次), 替代 std::copy 的标量逐元素转换
     // 用于 FFT 输入准备: limb 数组 (uint16) → double 缓冲区
-    inline void copyU16ToF64(const uint16_t *src, double *dst, size_t n)
-    {
-        size_t j = 0;
-#if defined(__AVX2__)
-        for (; j + 16 <= n; j += 16)
-        {
-            // 加载 32 字节 = 16 个 uint16, 拆成高低各 8 个
-            __m256i vals = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(src + j));
-            __m128i lo128 = _mm256_castsi256_si128(vals);      // 低 8 字节 = src[j..j+7]
-            __m128i hi128 = _mm256_extracti128_si256(vals, 1); // 高 8 字节 = src[j+8..j+15]
-            __m256i lo32 = _mm256_cvtepu16_epi32(lo128);       // 低 8 个 uint16 → 8 个 int32
-            __m256i hi32 = _mm256_cvtepu16_epi32(hi128);       // 高 8 个 uint16 → 8 个 int32
-            __m256d d0 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(lo32));
-            __m256d d1 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(lo32, 1));
-            __m256d d2 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(hi32));
-            __m256d d3 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(hi32, 1));
-            _mm256_storeu_pd(dst + j, d0);
-            _mm256_storeu_pd(dst + j + 4, d1);
-            _mm256_storeu_pd(dst + j + 8, d2);
-            _mm256_storeu_pd(dst + j + 12, d3);
-        }
-#endif
-        for (; j < n; j++)
-        {
-            dst[j] = src[j];
-        }
-    }
-    // OPT: Merge copyU16ToF64 + std::fill into single pass to reduce memory traffic
+// OPT: Merge copyU16ToF64 + std::fill into single pass to reduce memory traffic
     // Copies n uint16 to double, then fills remaining [n, total) with 0.0
     inline void copyU16ToF64AndFill(const uint16_t *src, double *dst, size_t n, size_t total)
     {
@@ -1270,10 +1231,7 @@ namespace hint
             }
             return data[0] % 2 == 1;
         }
-        bool isEven() const
-        {
-            return !isOdd();
-        }
+
         bool isZero() const
         {
             return length() == 0;
@@ -1292,15 +1250,7 @@ namespace hint
         {
             return data.size();
         }
-        size_t lengthBase10() const
-        {
-            size_t len = length();
-            if (len == 0)
-            {
-                return 1;
-            }
-            return (len - 1) * BASE_DIGIT + count_base10(data[len - 1]);
-        }
+
         void removeLeadingZero()
         {
             size_t len = length();
@@ -1317,41 +1267,7 @@ namespace hint
         {
             fromCharRange(str.data(), str.data() + str.size());
         }
-	void from_c_str(const char * str) {
-            if (str[0] == '\0')
-            {
-                return;
-            }
-	    int sz = 0;
-	    for (; str[sz] != '\0'; sz++);
-            auto p_begin = str, p_end = p_begin + sz;
-            if (str[0] == '-')
-            {
-                sign = true;
-                p_begin++;
-            }
-            size_t len = p_end - p_begin;
-            data.resize((len + BASE_DIGIT - 1) / BASE_DIGIT);
-            size_t i = 0;
-            while (p_end > p_begin + 3)
-            {
-                p_end -= BASE_DIGIT;
-                data[i] = str4toi(p_end);
-                i++;
-            }
-            if (p_end > p_begin)
-            {
-                data[i] = 0;
-                while (p_end > p_begin)
-                {
-                    data[i] *= 10;
-                    data[i] += p_begin[0] - '0';
-                    p_begin++;
-                }
-            }
-            removeLeadingZero();
-		
-	}
+
         std::string toString() const
         {
             std::string res;
@@ -1377,53 +1293,7 @@ namespace hint
             }
             return res;
         }
-	const char* to_c_str(char* res) const {
-            
-            std::vector<char> buf(4);
-            if (isZero())
-            {
-		res[0] = '0';
-		res[1] = '\0';
-                
-            }
-            else
-            {
-                /*if (isNeg())
-                {
-                    res = '-';
-                }*/
-		char *p = res;
-		int x = data.back();
-		int cnt = 0;
-		while (x) {
-			cnt++;
-			x /= 10;
-		}
-		x = data.back();
-		p = res + cnt - 1;
-		while (x) {
-			*p = (x % 10) + '0';
-			x /= 10;
-			p--;
-		}
-		p = res + cnt;
-                
-                size_t i = data.size() - 1;
-                while (i > 0)
-                {
-                    i--;
-                    itostr4(data[i], buf.data());
-                    
-		    for (int j = 0; j < 4; j++) {
-		    	*p = buf[j];
-			p++;
-		    }
-                }
-		*p = '\0';
-            }
-	    return res;
 
-	}
         // 零拷贝写入到 out，返回写入字节数（不含 '\0'）
         size_t writeTo(char* out) const
         {
@@ -1746,7 +1616,15 @@ namespace hint
             }
             for (; i < in1.size; i++)
             {
+                if (borrow == 0)
+                {
+                    break;
+                }
                 out[i] = sub_half<Limb>(in1[i], borrow, BASE, borrow);
+            }
+            if (borrow == 0 && i < in1.size && out.ptr != in1.ptr)
+            {
+                std::memcpy(out.ptr + i, in1.ptr + i, (in1.size - i) * sizeof(Limb));
             }
             return borrow;
         }
@@ -1820,7 +1698,15 @@ namespace hint
             }
             for (; i < in1.size; i++)
             {
+                if (borrow == 0)
+                {
+                    break;
+                }
                 out[i] = sub_half<Limb>(in1[i], borrow, BASE, borrow);
+            }
+            if (borrow == 0 && i < in1.size && out.ptr != in1.ptr)
+            {
+                std::memcpy(out.ptr + i, in1.ptr + i, (in1.size - i) * sizeof(Limb));
             }
             return borrow;
         }
@@ -4173,7 +4059,8 @@ namespace {
 
     // === 快速输入 (mmap 零拷贝 Linux / fread 一次性 Windows fallback) ===
     // 对齐 best/add.cpp 策略: SWAR 64-bit 批量找分隔符, 绕过 cin 流提取
-    static char iBuffer[8 << 20];  // 8MB (LC 总输入 ≤ 4MB)
+    static constexpr size_t IBUF_SIZE = 8 << 20;  // 8MB (LC 总输入 ≤ 4MB)
+    static char* iBuffer = nullptr;  // 堆分配 + 大页, 降低 TLB miss
     static const char *iCursor = iBuffer, *iEnd = iBuffer;
 
     static void initInput() {
@@ -4202,13 +4089,25 @@ namespace {
             if (p != MAP_FAILED) {
                 // Hint kernel: sequential access + prefetch (reduces TLB miss / page fault stall)
                 madvise(p, status.st_size, MADV_SEQUENTIAL | MADV_WILLNEED);
+                madvise(p, status.st_size, MADV_HUGEPAGE);
                 iCursor = reinterpret_cast<const char *>(p);
                 iEnd = iCursor + status.st_size;
                 return;
             }
         }
 #endif
-        size_t n = std::fread(iBuffer, 1, sizeof(iBuffer) - 1, stdin);
+        if (iBuffer == nullptr) {
+            void *m = mmap(nullptr, IBUF_SIZE, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (m != MAP_FAILED) {
+                madvise(m, IBUF_SIZE, MADV_HUGEPAGE);
+                iBuffer = static_cast<char *>(m);
+            } else {
+                static char fb[IBUF_SIZE];
+                iBuffer = fb;
+            }
+        }
+        size_t n = std::fread(iBuffer, 1, IBUF_SIZE - 1, stdin);
         iBuffer[n] = '\n';  // 哨兵, 确保 SWAR 能终止
         iCursor = iBuffer;
         iEnd = iBuffer + n;
@@ -4246,103 +4145,9 @@ namespace {
         if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
     }
 
-    // === ADD small_00 fast path: T=200000, digits 1-18 (int64) ===
-    // OPT: SWAR 8-byte digit validation + 4-byte grouped parse
-    static inline bool tryParseI64(const char *start, size_t len, int64_t &val) {
-        if (len == 0 || len > 19) return false;
-        bool neg = false;
-        size_t i = 0;
-        if (start[0] == '-') {
-            neg = true;
-            i = 1;
-            if (len == 1) return false;
-        }
-        size_t digit_len = len - i;
-        if (digit_len == 0 || digit_len > 18) return false;
-        // SWAR digit validation: 8 bytes at a time
-        // byte b is digit iff (b - 0x30) < 10; check via (sub + 0x76) bit7
-        size_t j = i;
-        while (j + 8 <= len) {
-            uint64_t data;
-            std::memcpy(&data, start + j, 8);
-            uint64_t sub = data - 0x3030303030303030ULL;
-            uint64_t mask = (sub + 0x7676767676767676ULL) & 0x8080808080808080ULL;
-            if (mask) return false;
-            j += 8;
-        }
-        for (; j < len; j++) {
-            if (start[j] < '0' || start[j] > '9') return false;
-        }
-        // 4-byte grouped parse (str4toi reduces 64-bit multiply count)
-        int64_t v = 0;
-        while (len - i >= 4) {
-            v = v * 10000 + hint::str4toi(start + i);
-            i += 4;
-        }
-        while (i < len) {
-            v = v * 10 + (start[i] - '0');
-            i++;
-        }
-        val = neg ? -v : v;
-        return true;
-    }
     // Unchecked variant: skips digit validation (caller guarantees digits)
     // Used when readToken already verified token boundaries on well-formed input
-    static inline bool tryParseI64Unchecked(const char *start, size_t len, int64_t &val) {
-        if (len == 0 || len > 19) return false;
-        bool neg = false;
-        size_t i = 0;
-        if (start[0] == '-') {
-            neg = true;
-            i = 1;
-            if (len == 1) return false;
-        }
-        size_t digit_len = len - i;
-        if (digit_len == 0 || digit_len > 18) return false;
-        // 4-byte grouped parse (str4toi reduces 64-bit multiply count)
-        int64_t v = 0;
-        while (len - i >= 4) {
-            v = v * 10000 + hint::str4toi(start + i);
-            i += 4;
-        }
-        while (i < len) {
-            v = v * 10 + (start[i] - '0');
-            i++;
-        }
-        val = neg ? -v : v;
-        return true;
-    }
-
-    // SWAR 4-byte ASCII digits to uint32 (0-9999), pure arithmetic (no lookup table)
-    // Based on Daniel Lemire's parse technique: mask nibbles, then pair/quad combine
-    //   v = [d0, d1, d2, d3] (each byte 0-9 after & 0x0F)
-    //   *2561  -> byte i = d[i]*1 + d[i-1]*10  (pairs combined)
-    //   *6553601 -> word i = pair[i] + pair[i-1]*100  (quads combined)
-    static inline uint32_t parse4SWAR(const char *s) {
-        uint32_t v;
-        std::memcpy(&v, s, 4);
-        v = (v & 0x0F0F0F0Fu) * 2561u;
-        v = ((v >> 8) & 0x00FF00FFu) * 6553601u;
-        return (v >> 16) & 0xFFFFu;
-    }
-
-    // Parse 1-18 digit positive integer, no validation (caller guarantees all digits, no '-')
-    // Uses SWAR arithmetic (parse4SWAR) instead of 64KB lookup table (str4toi)
-    static inline int64_t parseI64Positive(const char *s, size_t len) {
-        int64_t v = 0;
-        size_t i = 0;
-        while (len - i >= 4) {
-            v = v * 10000 + parse4SWAR(s + i);
-            i += 4;
-        }
-        while (i < len) {
-            v = v * 10 + (s[i] - '0');
-            i++;
-        }
-        return v;
-    }
-
-    // SWAR parse 8 ASCII digits from uint64 value (no memcpy needed)
+// SWAR parse 8 ASCII digits from uint64 value (no memcpy needed)
     // Daniel Lemire technique: 3 multiplies to combine 8 digit nibbles
     static inline uint64_t parse8SWAR_u64(uint64_t u) {
         u = (u & 0x0F0F0F0F0F0F0F0FULL) * 2561ULL;
@@ -4444,57 +4249,149 @@ namespace {
         return (int64_t)r;
     }
 
+    // ---------------------------------------------------------------- OPT-A4
+    // 无分支 SIMD 解析。动机(callgrind 实测): 旧 parsePositiveUntilNondigit 按
+    // "是否 >=8 位 / 是否 >=16 位" 分层, 而 small_00 的位数在 1..18 均匀分布,
+    // P(>=8)=11/18=61% —— 正好是分支预测器最坏的情形。该函数独占了 A2 版全部
+    // 分支误预测的 61.4% (336,067 / 547,800)。
+    // 改造: 一次看 32 字节 -> movemask+ctz 直接得 token 长度 -> pshufb 右对齐
+    // -> 定长 madd 链求值。主分支变成 P(<=16 位)=16/18=89% 的强偏斜分支。
+    alignas(16) static const int8_t kShufRight[17][16] = {
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128},
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,   0},
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,   0,   1},
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,   0,   1,   2},
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,   0,   1,   2,   3},
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,   0,   1,   2,   3,   4},
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,-128,   0,   1,   2,   3,   4,   5},
+        {-128,-128,-128,-128,-128,-128,-128,-128,-128,   0,   1,   2,   3,   4,   5,   6},
+        {-128,-128,-128,-128,-128,-128,-128,-128,   0,   1,   2,   3,   4,   5,   6,   7},
+        {-128,-128,-128,-128,-128,-128,-128,   0,   1,   2,   3,   4,   5,   6,   7,   8},
+        {-128,-128,-128,-128,-128,-128,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9},
+        {-128,-128,-128,-128,-128,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10},
+        {-128,-128,-128,-128,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11},
+        {-128,-128,-128,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12},
+        {-128,-128,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13},
+        {-128,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14},
+        {   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14,  15}
+    };
+
+    // 每字节是否 '0'..'9' 的位掩码
+    static inline uint32_t digitMask16(__m128i v) {
+        __m128i sub = _mm_sub_epi8(v, _mm_set1_epi8('0'));
+        __m128i le9 = _mm_cmpeq_epi8(_mm_min_epu8(sub, _mm_set1_epi8(9)), sub);
+        return uint32_t(_mm_movemask_epi8(le9));
+    }
+
+    // 解析 v 的前 dl (<=16) 位十进制, 全程无分支
+    // maddubs: [d0,d1] -> d0*10+d1 ; madd: [x,y] -> x*100+y ; 再 *10000+
+    static inline uint64_t simdParse16(__m128i v, uint32_t dl) {
+        __m128i d = _mm_sub_epi8(v, _mm_set1_epi8('0'));
+        __m128i a = _mm_shuffle_epi8(
+            d, _mm_load_si128(reinterpret_cast<const __m128i *>(kShufRight[dl])));
+        __m128i t1 = _mm_maddubs_epi16(a, _mm_set1_epi16(0x010A));      // 10,1
+        __m128i t2 = _mm_madd_epi16(t1, _mm_set1_epi32(0x00010064));    // 100,1
+        __m128i t3 = _mm_packus_epi32(t2, t2);
+        __m128i t4 = _mm_madd_epi16(t3, _mm_set1_epi32(0x00012710));    // 10000,1
+        uint64_t hi = uint32_t(_mm_cvtsi128_si32(t4));
+        uint64_t lo = uint32_t(_mm_extract_epi32(t4, 1));
+        return hi * 100000000ULL + lo;
+    }
+
+    static inline int64_t parseSIMD(const char *s, size_t &len) {
+        // 尾部不足 32 字节 -> 回退到标量版 (mmap 末页越界保护)
+        if (__builtin_expect(s + 32 > iEnd, 0)) {
+            return parsePositiveUntilNondigit(s, len);
+        }
+        __m128i v0 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(s));
+        __m128i v1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(s + 16));
+        uint32_t m = digitMask16(v0) | (digitMask16(v1) << 16);
+        // 置第 32 位, 保证 m==0xFFFFFFFF 时 ctzll 有定义 (结果恰为 32)
+        uint32_t dl = uint32_t(__builtin_ctzll((~uint64_t(m)) | (1ULL << 32)));
+        len = dl;
+        if (__builtin_expect(dl <= 16, 1)) {          // 89%
+            return int64_t(simdParse16(v0, dl));
+        }
+        if (__builtin_expect(dl <= 18, 1)) {          // 17-18 位
+            uint32_t hd = dl - 16;                    // 1 或 2
+            uint64_t hv = uint64_t(s[0] - '0');
+            if (hd == 2) hv = hv * 10 + uint64_t(s[1] - '0');
+            __m128i lowv = _mm_loadu_si128(reinterpret_cast<const __m128i *>(s + hd));
+            return int64_t(hv * 10000000000000000ULL + simdParse16(lowv, 16));
+        }
+        // >18 位: 值交给 Integer 路径, 这里只需给出正确的 token 长度。
+        // dl<32 表示边界已在这 32 字节内找到, len=dl 已正确 —— 必须立刻返回,
+        // 否则下面的续扫会跨过分隔符把两个 token 粘在一起 (曾导致 8 例 WA)。
+        if (dl < 32) return 0;
+        size_t i = 32;
+        while (s + i + 8 <= iEnd) {
+            uint64_t d8;
+            std::memcpy(&d8, s + i, 8);
+            uint64_t mk = (~d8) & (d8 - 0x2121212121212121ULL) & 0x8080808080808080ULL;
+            if (mk) { i += size_t(__builtin_ctzll(mk)) / 8; len = i; return 0; }
+            i += 8;
+        }
+        while (s + i < iEnd && s[i] >= 0x21) i++;
+        len = i;
+        return 0;
+    }
+
     // int64 to string, write to oBuffer (no Integer overhead)
     // OPT: 10000-base decomposition + outTable lookup, division count 18->5
-    static inline void writeI64(int64_t val) {
-        if (val == 0) { *oCursor++ = '0'; return; }
+// ---------------------------------------------------------------- OPT-A2
+    // decDigits: 十进制位数, 无分支 (Lemire). x >= 1 required.
+    static inline uint32_t decDigits(uint64_t x) {
+        static const uint64_t kPow10[20] = {
+            1ULL, 10ULL, 100ULL, 1000ULL, 10000ULL,
+            100000ULL, 1000000ULL, 10000000ULL, 100000000ULL, 1000000000ULL,
+            10000000000ULL, 100000000000ULL, 1000000000000ULL,
+            10000000000000ULL, 100000000000000ULL, 1000000000000000ULL,
+            10000000000000000ULL, 100000000000000000ULL,
+            1000000000000000000ULL, 10000000000000000000ULL};
+        uint32_t lz = 63u - uint32_t(__builtin_clzll(x));   // 0..63
+        uint32_t d = ((lz + 1u) * 1233u) >> 12;             // floor(log10) guess
+        return d + uint32_t(x >= kPow10[d]) ;               // 1..20, branchless
+    }
+
+    // writeI64NL: 把 '-' + 十进制数字 + '\n' 一次性写出, 零数据相关分支。
+    // small_00 的位数在 1..18 均匀分布 -> 旧版 while(uv>=10000) 的迭代次数
+    // 0..4 完全随机, 分支预测器必然失效(每次 misprediction ~17 cycle)。
+    // 这里改为: 定长展开成 5 组 4 位(含前导零)写入栈上 scratch, 再按位数偏移
+    // 做一次 32 字节非对齐搬运。用固定吞吐换掉不可预测分支。
+    static inline void writeI64NL(int64_t val) {
         uint64_t uv;
-        bool neg = val < 0;
-        if (neg) {
-            *oCursor++ = '-';
-            uv = uint64_t(-(val + 1)) + 1;
-        } else {
-            uv = uint64_t(val);
-        }
-        // 10000-base decomposition: low -> high, max 5 groups (18 digits = 4+4+4+4+2)
-        uint32_t limbs[5];
-        int n = 0;
-        while (uv >= 10000) {
-            limbs[n++] = uint32_t(uv % 10000);
-            uv /= 10000;
-        }
-        limbs[n++] = uint32_t(uv); // highest group (1-4 digits)
-        // Output highest group (no leading zeros)
-        uint32_t high = limbs[n - 1];
-        if (high < 10) {
-            *oCursor++ = char('0' + high);
-        } else if (high < 100) {
-            *oCursor++ = char('0' + high / 10);
-            *oCursor++ = char('0' + high % 10);
-        } else if (high < 1000) {
-            *oCursor++ = char('0' + high / 100);
-            *oCursor++ = char('0' + high / 10 % 10);
-            *oCursor++ = char('0' + high % 10);
-        } else {
-            std::memcpy(oCursor, &hint::outTable.t[high], 4);
-            oCursor += 4;
-        }
-        // Output remaining groups (zero-padded, 4 bytes/table lookup)
-        for (int j = n - 2; j >= 0; j--) {
-            std::memcpy(oCursor, &hint::outTable.t[limbs[j]], 4);
-            oCursor += 4;
-        }
+        uint64_t neg = uint64_t(val < 0);
+        // 无分支取绝对值
+        int64_t m = -int64_t(neg);
+        uv = uint64_t((val ^ m) - m);
+
+        // scratch[0..19] = 20 位十进制(前导零), scratch[20] = '\n'
+        // 负号写在 scratch[19-d], 正好落在数字起点前一格(前导零区)。
+        alignas(32) char sc[64];
+        uint64_t q1 = uv / 100000000ULL;          // 高 11 位
+        uint32_t r1 = uint32_t(uv - q1 * 100000000ULL);
+        uint32_t q2 = uint32_t(q1 / 100000000ULL); // 最高 3 位 (uv < 2e19)
+        uint32_t r2 = uint32_t(q1 - uint64_t(q2) * 100000000ULL);
+        uint32_t g4 = q2;
+        uint32_t g3 = r2 / 10000u, g2 = r2 - g3 * 10000u;
+        uint32_t g1 = r1 / 10000u, g0 = r1 - g1 * 10000u;
+        std::memcpy(sc + 0,  &hint::outTable.t[g4], 4);
+        std::memcpy(sc + 4,  &hint::outTable.t[g3], 4);
+        std::memcpy(sc + 8,  &hint::outTable.t[g2], 4);
+        std::memcpy(sc + 12, &hint::outTable.t[g1], 4);
+        std::memcpy(sc + 16, &hint::outTable.t[g0], 4);
+        sc[20] = '\n';
+
+        uint32_t d = (uv == 0) ? 1u : decDigits(uv);   // uv==0 -> 输出 "0"
+        sc[19 - d] = '-';
+        const char *src = sc + 20 - d - neg;
+        // 一次 32B 搬运覆盖 '-' + 至多 19 位数字 + '\n' (<= 21 字节)
+        std::memcpy(oCursor, src, 32);
+        oCursor += d + neg + 1;
     }
 
     // 从 iCursor 读 token (不解析), 推进游标, 返回 token 起始指针和长度
-    static inline void readToken(const char *&ptr, size_t &len) {
-        ptr = iCursor;
-        len = swarTokenLen(iCursor);
-        iCursor += len;
-        if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
-    }
 }
-#if defined(HINT_OP_ADD)
 int main() {
 #ifdef PROFILE_DIV
     clock_t _c0 = clock();
@@ -4550,65 +4447,53 @@ int main() {
 #ifdef PROFILE_DIV
         auto _p0 = std::chrono::high_resolution_clock::now();
 #endif
+        // OPT-A1+A4+A6: 负号跳过 1 字节后直接喂 SWAR 快解析器, 再取负。
+        // 旧版对负数先 swarTokenLen 扫一遍并丢弃值, 再 tryParseI64Unchecked 从头
+        // 重解析(后者是 4 字节慢循环)。small_00 有 75% 的行含负号, 即 75% 的 token
+        // 走了二次慢解析。现在负数与正数共用同一条 SWAR 8 字节快路径。
         const char *sa = iCursor;
-        size_t la;
-        int64_t va;
-        // FIX: parsePositiveUntilNondigit 不处理负号, 负数用 swarTokenLen 获取 token
-        if (sa < iEnd && *sa == '-') {
-            la = swarTokenLen(iCursor);
-            iCursor += la;
-            va = 0;
-        } else {
-            va = parsePositiveUntilNondigit(sa, la);
-            iCursor = sa + la;
-        }
+        size_t dla;
+        size_t nega = size_t(*sa == '-');   // OPT-A6 branchless
+        int64_t va = parseSIMD(sa + nega, dla);
+        va = nega ? -va : va;
+        iCursor = sa + nega + dla;
         if (iCursor < iEnd && *iCursor < 0x21) iCursor++;  // skip space
 
         const char *sb = iCursor;
-        size_t lb;
-        int64_t vb;
-        if (sb < iEnd && *sb == '-') {
-            lb = swarTokenLen(iCursor);
-            iCursor += lb;
-            vb = 0;
-        } else {
-            vb = parsePositiveUntilNondigit(sb, lb);
-            iCursor = sb + lb;
-        }
+        size_t dlb;
+        size_t negb = size_t(*sb == '-');   // OPT-A6 branchless
+        int64_t vb = parseSIMD(sb + negb, dlb);
+        vb = negb ? -vb : vb;
+        iCursor = sb + negb + dlb;
         if (iCursor < iEnd && *iCursor < 0x21) iCursor++;  // skip newline
 #ifdef PROFILE_DIV
         auto _p1 = std::chrono::high_resolution_clock::now();
         t_read += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
 #endif
-        // Check if both tokens are positive <= 18 digits (fast path)
-        if (la > 0 && la <= 18 && lb > 0 && lb <= 18 && sa[0] != '-' && sb[0] != '-') {
-            // va + vb < 2*10^18 < INT64_MAX, no overflow
+        // OPT-A1: 判定只看数字位数, 符号已折进 va/vb。
+        // OPT-A2: 快路径调用 writeI64NL, 它把 '-' + 数字 + '\n' 一次性写出。
+        if (dla > 0 && dla <= 18 && dlb > 0 && dlb <= 18) {
 #ifdef PROFILE_DIV
             auto _p2 = std::chrono::high_resolution_clock::now();
             t_parse += std::chrono::duration<double, std::milli>(_p2 - _p1).count();
 #endif
-            writeI64(va + vb);
+            writeI64NL(va + vb);
 #ifdef PROFILE_DIV
             _p1 = std::chrono::high_resolution_clock::now();
             t_write += std::chrono::duration<double, std::milli>(_p1 - _p2).count();
 #endif
         } else {
-            // Slow path: negative, or > 18 digits → use Integer
-            if (tryParseI64Unchecked(sa, la, va) && tryParseI64Unchecked(sb, lb, vb)) {
-                writeI64(va + vb);
-            } else {
-                a.fromCharRange(sa, sa + la);
-                b.fromCharRange(sb, sb + lb);
-                a += b;
-                writeHint(a);
-            }
+            a.fromCharRange(sa, sa + nega + dla);
+            b.fromCharRange(sb, sb + negb + dlb);
+            a += b;
+            writeHint(a);
+            *oCursor++ = '\n';
 #ifdef PROFILE_DIV
             _p1 = std::chrono::high_resolution_clock::now();
             t_write += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
             t_parse += std::chrono::duration<double, std::milli>(_p1 - _p0).count();
 #endif
         }
-        *oCursor++ = '\n';
 #ifdef PROFILE_DIV
         auto _p4 = std::chrono::high_resolution_clock::now();
         t_nl += std::chrono::duration<double, std::milli>(_p4 - _p1).count();
@@ -4629,247 +4514,3 @@ int main() {
 #endif
     return 0;
 }
-#elif defined(HINT_OP_MUL)
-int main() {
-#ifdef BENCH_INTERNAL
-    auto _t_main_start = std::chrono::high_resolution_clock::now();
-#endif
-    initInput();
-#ifdef BENCH_INTERNAL
-    auto _t_after_init = std::chrono::high_resolution_clock::now();
-#endif
-    size_t t = 0;
-    while (iCursor < iEnd && *iCursor >= '0' && *iCursor <= '9') {
-        t = t * 10 + size_t(*iCursor++ - '0');
-    }
-    if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
-    hint::Integer a, b;
-#ifdef BENCH_INTERNAL
-    // 内部计时模式: 读1对, 循环计算 N 次, 每次单独计时
-    // 同时测 parse 和 write, 定位 I/O 瓶颈
-    double t_parse = 0, t_write = 0;
-    auto tp0 = std::chrono::high_resolution_clock::now();
-    parseInteger(a);
-    parseInteger(b);
-    auto tp1 = std::chrono::high_resolution_clock::now();
-    t_parse = std::chrono::duration<double, std::milli>(tp1 - tp0).count();
-    // warmup
-    hint::Integer c;
-    for (int i = 0; i < 3; i++) { c = a; c *= b; }
-    const int N = 30;
-    double times[30];
-    double total = 0;
-    for (int i = 0; i < N; i++) {
-        c = a;
-        auto t0 = std::chrono::high_resolution_clock::now();
-        c *= b;
-        auto t1 = std::chrono::high_resolution_clock::now();
-        times[i] = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        total += times[i];
-    }
-    std::sort(times, times + N);
-    auto tw0 = std::chrono::high_resolution_clock::now();
-    writeHint(c);
-    *oCursor++ = '\n';
-    auto tw1 = std::chrono::high_resolution_clock::now();
-    flushOutput();
-    auto tw2 = std::chrono::high_resolution_clock::now();
-    double t_writeTo = std::chrono::duration<double, std::milli>(tw1 - tw0).count();
-    double t_flush = std::chrono::duration<double, std::milli>(tw2 - tw1).count();
-    t_write = t_writeTo + t_flush;
-    auto _t_main_end = std::chrono::high_resolution_clock::now();
-    double t_init = std::chrono::duration<double, std::milli>(_t_after_init - _t_main_start).count();
-    double t_wall = std::chrono::duration<double, std::milli>(_t_main_end - _t_main_start).count();
-    // 输出: INIT / PARSE / MUL_MIN / MUL_MED / MUL_AVG / WRITE_TO / FLUSH / WALL
-    fprintf(stderr, "INIT: %.3f  PARSE: %.3f  MUL_MIN: %.3f  MUL_MED: %.3f  MUL_AVG: %.3f  WRITE_TO: %.3f  FLUSH: %.3f  WALL: %.3f\n",
-            t_init, t_parse, times[0], times[N/2], total/N, t_writeTo, t_flush, t_wall);
-    return 0;
-#endif
-    while (t--) {
-        parseInteger(a);
-        parseInteger(b);
-        a *= b;
-        writeHint(a);
-        *oCursor++ = '\n';
-    }
-    flushOutput();
-    return 0;
-}
-#elif defined(HINT_OP_DIV)
-int main() {
-#ifdef PROFILE_DIV
-    setvbuf(stderr, NULL, _IONBF, 0);
-#endif
-    initInput();
-    size_t t = 0;
-    while (iCursor < iEnd && *iCursor >= '0' && *iCursor <= '9') {
-        t = t * 10 + size_t(*iCursor++ - '0');
-    }
-    if (iCursor < iEnd && *iCursor < 0x21) iCursor++;
-    hint::Integer a, b, q, r;
-    while (t--) {
-        parseInteger(a);
-        parseInteger(b);
-        a.absDivRem(b, q, r);
-        writeHint(q);
-        *oCursor++ = ' ';
-        writeHint(r);
-        *oCursor++ = '\n';
-    }
-    flushOutput();
-    return 0;
-}
-#elif defined(HINT_OP_TESTMOD)
-// 测试 fftMulModBm1 正确性: 输入 t 组 (a, b, m), 对比 R1=fftMulModBm1 vs R2=线性卷积折叠
-int main() {
-    using namespace hint;
-    using Limb = Integer::Limb;
-    using Span = Integer::Span;
-    int t;
-    if (scanf("%d", &t) != 1) return 1;
-    int pass_cnt = 0, fail_cnt = 0;
-    while (t--) {
-        static char buf_a[1 << 21], buf_b[1 << 21];
-        size_t m;
-        if (scanf("%s %s %zu", buf_a, buf_b, &m) != 3) return 1;
-        // 修复: buf_a 是 char[N], 模板构造函数 Integer(const T&) [T=char[N]] 优先于
-        // Integer(const char*), 导致 sign=input<0 指针比较错误. 用 const char* 中转.
-        const char *sa = buf_a, *sb = buf_b;
-        Integer a(sa), b(sb);
-        size_t pa = a.length(), pb = b.length();
-
-        // R1 = fftMulModBm1(a, b, m)
-        std::vector<Limb> r1(m, 0);
-        Span r1_span(r1.data(), m);
-        Integer::fftMulModBm1(a.getView(), b.getView(), m, r1_span);
-
-        // P = a * b (full convolution)
-        std::vector<Limb> pbuf(pa + pb, 0);
-        Span p_span(pbuf.data(), pa + pb);
-        Integer::absMul(a.getView(), b.getView(), p_span);
-        size_t plen = count_true_length(pbuf.data(), pa + pb);
-
-        // R2 = fold P to m limbs + cyclic carry propagation
-        std::vector<Limb> r2(m, 0);
-        uint64_t carry = 0;
-        for (size_t i = 0; i < m; i++) {
-            uint64_t s = carry + (i < plen ? uint64_t(pbuf[i]) : 0);
-            if (i + m < plen) s += pbuf[i + m];
-            uint64_t q = s / Integer::BASE;
-            r2[i] = Limb(s - q * Integer::BASE);
-            carry = q;
-        }
-        while (carry > 0) {
-            bool wrapped = true;
-            for (size_t j = 0; j < m && carry > 0; j++) {
-                uint64_t s = uint64_t(r2[j]) + carry;
-                uint64_t q = s / Integer::BASE;
-                r2[j] = Limb(s - q * Integer::BASE);
-                carry = q;
-                if (carry == 0) { wrapped = false; break; }
-            }
-            if (wrapped && carry == 1) {
-                bool allzero = true;
-                for (size_t j = 0; j < m; j++) if (r2[j]) { allzero = false; break; }
-                if (allzero) { carry = 0; }
-            }
-        }
-        size_t r2_len = count_true_length(r2.data(), m);
-        size_t r1_len = count_true_length(r1.data(), m);
-
-        bool pass = (r1_len == r2_len);
-        if (pass) {
-            for (size_t i = 0; i < r1_len; i++) {
-                if (r1[i] != r2[i]) { pass = false; break; }
-            }
-        }
-        if (pass) {
-            pass_cnt++;
-            printf("PASS m=%zu pa=%zu pb=%zu plen=%zu\n", m, pa, pb, plen);
-        } else {
-            fail_cnt++;
-            printf("FAIL m=%zu pa=%zu pb=%zu plen=%zu r1_len=%zu r2_len=%zu\n",
-                   m, pa, pb, plen, r1_len, r2_len);
-            printf("R1:"); for (size_t i = 0; i < r1_len && i < 10; i++) printf(" %u", r1[i]); printf("\n");
-            printf("R2:"); for (size_t i = 0; i < r2_len && i < 10; i++) printf(" %u", r2[i]); printf("\n");
-        }
-    }
-    printf("=== %d PASS, %d FAIL ===\n", pass_cnt, fail_cnt);
-    return 0;
-}
-#elif defined(HINT_OP_TESTNEWTON)
-// 测试 absInvNewtonGMP vs absInvNewton 正确性 (fallback 模式下应完全一致)
-// 输入: 第一行 t (组数), 然后每组 2 行 (a 和 b 的十进制字符串)
-// a 仅用于标记测试规模, 实际只用 b 作为 divisor 计算逆
-// 输出: 每组 PASS/FAIL, 末尾汇总
-int main() {
-    using namespace hint;
-    using Limb = Integer::Limb;
-    using Span = Integer::Span;
-    using View = Integer::View;
-
-    int t;
-    if (scanf("%d", &t) != 1) return 1;
-    int pass_cnt = 0, fail_cnt = 0;
-    while (t--) {
-        static char buf_a[1 << 21], buf_b[1 << 21];
-        if (scanf("%s %s", buf_a, buf_b) != 2) return 1;
-        // buf_a/buf_b 是 char[N], 模板构造函数 Integer(const T&) 会优先匹配,
-        // 导致 sign=input<0 指针比较错误. 用 const char* 中转 (对齐 TESTMOD 修复)
-        const char *sa = buf_a, *sb = buf_b;
-        Integer a_int(sa), b_int(sb);
-        size_t k = b_int.length();
-        if (k == 0) {
-            printf("SKIP (b=0)\n");
-            continue;
-        }
-
-        // 分配两个独立 inv 缓冲区 (长度 k+1, 与 absInvNewton 约定一致)
-        std::vector<Limb> inv1_buf(k + 1, 0), inv2_buf(k + 1, 0);
-        Span inv1_span(inv1_buf.data(), k + 1);
-        Span inv2_span(inv2_buf.data(), k + 1);
-        View bv = b_int.getView();
-
-        // 分别调用 absInvNewton (基线) 和 absInvNewtonGMP (待测, 当前 fallback)
-        Integer::absInvNewton(bv, inv1_span);
-        Integer::absInvNewtonGMP(bv, inv2_span);
-
-        // 对比结果 (逐 limb 比较, 用 count_true_length 去前导零)
-        size_t len1 = count_true_length(inv1_buf.data(), k + 1);
-        size_t len2 = count_true_length(inv2_buf.data(), k + 1);
-        bool pass = (len1 == len2);
-        if (pass) {
-            for (size_t i = 0; i < len1; i++) {
-                if (inv1_buf[i] != inv2_buf[i]) { pass = false; break; }
-            }
-        }
-        if (pass) {
-            pass_cnt++;
-            printf("PASS k=%zu inv_len=%zu (a_digits=%zu b_digits=%zu)\n",
-                   k, len1, a_int.lengthBase10(), b_int.lengthBase10());
-        } else {
-            fail_cnt++;
-            printf("FAIL k=%zu len1=%zu len2=%zu (a_digits=%zu b_digits=%zu)\n",
-                   k, len1, len2, a_int.lengthBase10(), b_int.lengthBase10());
-            printf("INV1 lo:"); for (size_t i = 0; i < len1 && i < 10; i++) printf(" %u", inv1_buf[i]); printf("\n");
-            printf("INV2 lo:"); for (size_t i = 0; i < len2 && i < 10; i++) printf(" %u", inv2_buf[i]); printf("\n");
-            printf("INV1 hi:"); for (size_t i = len1 > 10 ? len1 - 10 : 0; i < len1; i++) printf(" %u", inv1_buf[i]); printf("\n");
-            printf("INV2 hi:"); for (size_t i = len2 > 10 ? len2 - 10 : 0; i < len2; i++) printf(" %u", inv2_buf[i]); printf("\n");
-            // 找到第一个不同的 limb
-            size_t max_len = std::max(len1, len2);
-            for (size_t i = 0; i < max_len; i++) {
-                Limb v1 = i < len1 ? inv1_buf[i] : 0;
-                Limb v2 = i < len2 ? inv2_buf[i] : 0;
-                if (v1 != v2) {
-                    printf("DIFF @%zu: inv1=%u inv2=%u\n", i, v1, v2);
-                    break;
-                }
-            }
-        }
-    }
-    printf("=== %d PASS, %d FAIL ===\n", pass_cnt, fail_cnt);
-    return 0;
-}
-#else
-#error "Must define HINT_OP_ADD, HINT_OP_MUL, HINT_OP_DIV, HINT_OP_TESTMOD, or HINT_OP_TESTNEWTON"
-#endif

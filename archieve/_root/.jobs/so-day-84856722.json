@@ -1,0 +1,16 @@
+{
+ "id": "so-day-84856722",
+ "name": "so-day",
+ "cmd": [
+  "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe",
+  "superopt/run_day.py"
+ ],
+ "pid": 12988,
+ "started": 1786084856.729759,
+ "timeout": 18000.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786096734.5180933,
+ "out": "D:\\precious_speed\\.jobs\\so-day-84856722.out"
+}

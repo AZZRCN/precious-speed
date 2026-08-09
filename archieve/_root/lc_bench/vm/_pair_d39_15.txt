@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/azzr/divbench/_pair_div_remote.py", line 28, in <module>
+    assert len(BINS) >= 2, 'need >=2 bins'
+           ^^^^^^^^^^^^^^
+AssertionError: need >=2 bins

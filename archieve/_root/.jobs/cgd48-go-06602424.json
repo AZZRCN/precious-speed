@@ -1,0 +1,17 @@
+{
+ "id": "cgd48-go-06602424",
+ "name": "cgd48-go",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "cg_d48.py",
+  "go"
+ ],
+ "pid": 11208,
+ "started": 1786106602.4291432,
+ "timeout": 600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786106647.0314298,
+ "out": "D:\\precious_speed\\.jobs\\cgd48-go-06602424.out"
+}

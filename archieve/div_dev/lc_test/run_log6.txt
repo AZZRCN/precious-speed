@@ -1,0 +1,58 @@
+﻿=== Phase 1: Compilation ===
+  correct.exe: rc=0
+  checker.exe: rc=0
+  small.exe: OK
+  medium.exe: OK
+  large.exe: OK
+  max.exe: OK
+  a_max_b_random.exe: OK
+  r_nearly_zero.exe: OK
+  length_ratio_integer.exe: OK
+  burnikel_ziegler_bound.exe: OK
+
+=== Phase 2: Generate + Test ===
+
+[small] 1 seed(s), timeout=10s/case
+  seed=0: |A|=1 |B|=1 in=5998404B gen=207ms mod=91ms cor=919ms -> PASS
+
+[medium] 3 seed(s), timeout=30s/case
+  seed=0: |A|=9 |B|=7 in=5089983B gen=187ms mod=147ms cor=650ms -> PASS
+  seed=1: |A|=296 |B|=261 in=4040040B gen=121ms mod=77ms cor=323ms -> PASS
+  seed=2: |A|=9365 |B|=9108 in=3993299B gen=101ms mod=75ms cor=543ms -> PASS
+
+[large] 2 seed(s), timeout=60s/case
+  seed=0: |A|=82751 |B|=26258 in=3924913B gen=138ms mod=72ms cor=509ms -> PASS
+  seed=1: |A|=93228 |B|=87533 in=3975969B gen=105ms mod=74ms cor=733ms -> PASS
+
+[max] 3 seed(s), timeout=300s/case
+  seed=0: |A|=2000001 |B|=2000001 in=4000008B gen=98ms mod=21ms cor=118ms -> PASS
+  seed=1: |A|=2000001 |B|=1 in=2000008B gen=49ms mod=21ms cor=96ms -> PASS
+  seed=2: |A|=2000000 |B|=2000001 in=4000007B gen=95ms mod=40ms cor=258ms -> PASS
+
+[a_max_b_random] 3 seed(s), timeout=300s/case
+  seed=0: |A|=2000000 |B|=241236 in=2241242B gen=77ms mod=48ms cor=589ms -> PASS
+  seed=1: |A|=2000000 |B|=617516 in=2617522B gen=75ms mod=77ms cor=716ms -> PASS
+  seed=2: |A|=2000000 |B|=824100 in=2824106B gen=74ms mod=85ms cor=695ms -> PASS
+
+[r_nearly_zero] 3 seed(s), timeout=60s/case
+  seed=0: |A|=7 |B|=5 in=5087655B gen=632ms mod=143ms cor=563ms -> PASS
+  seed=1: |A|=820 |B|=532 in=4011841B gen=276ms mod=158ms cor=305ms -> PASS
+  seed=2: |A|=88965 |B|=31557 in=3943331B gen=592ms mod=63ms cor=650ms -> PASS
+
+[length_ratio_integer] 6 seed(s), timeout=120s/case
+  seed=0: |A|=1333334 |B|=666667 in=4000011B gen=117ms mod=78ms cor=737ms -> PASS
+  seed=1: |A|=1500000 |B|=500000 in=4000009B gen=122ms mod=174ms cor=914ms -> PASS
+  seed=2: |A|=1666665 |B|=333333 in=4000005B gen=124ms mod=134ms cor=1212ms -> PASS
+  seed=3: |A|=1818180 |B|=181818 in=4000005B gen=101ms mod=109ms cor=1189ms -> PASS
+  seed=4: |A|=1904760 |B|=95238 in=4000005B gen=110ms mod=89ms cor=1239ms -> PASS
+  seed=5: |A|=1960750 |B|=39215 in=3999939B gen=114ms mod=98ms cor=1075ms -> PASS
+
+[burnikel_ziegler_bound] 4 seed(s), timeout=60s/case
+  seed=0: |A|=5 |B|=2 in=4003232B gen=149ms mod=65ms cor=319ms -> PASS
+  seed=1: |A|=37 |B|=18 in=3993221B gen=171ms mod=53ms cor=403ms -> PASS
+  seed=2: |A|=2 |B|=1 in=4004964B gen=177ms mod=109ms cor=394ms -> PASS
+  seed=3: |A|=39 |B|=20 in=3989993B gen=190ms mod=68ms cor=479ms -> PASS
+
+=== Summary ===
+Total: 25, Passed: 25, Failed: 0
+Max digits seen: 2000001

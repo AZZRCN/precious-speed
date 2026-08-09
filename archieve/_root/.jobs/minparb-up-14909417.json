@@ -1,0 +1,18 @@
+{
+ "id": "minparb-up-14909417",
+ "name": "minparb-up",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "vmbench.py",
+  "cfg_minpar.json",
+  "up"
+ ],
+ "pid": 2924,
+ "started": 1786114909.4271739,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786114946.232608,
+ "out": "D:\\precious_speed\\.jobs\\minparb-up-14909417.out"
+}

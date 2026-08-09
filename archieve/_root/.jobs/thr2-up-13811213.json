@@ -1,0 +1,18 @@
+{
+ "id": "thr2-up-13811213",
+ "name": "thr2-up",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "vmbench.py",
+  "cfg_thr2.json",
+  "up"
+ ],
+ "pid": 12460,
+ "started": 1786113811.2225828,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786113843.1020825,
+ "out": "D:\\precious_speed\\.jobs\\thr2-up-13811213.out"
+}

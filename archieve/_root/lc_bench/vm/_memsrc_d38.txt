@@ -1,0 +1,53 @@
+-rw------- 1 azzr azzr 193316 Aug  5 13:20 /tmp/cgT_d38_length_ratio_integer_00.out
+
+
+===== callers of memset =====
+==== callers of *memset* ====
+  142        calls  inclIr=     6.60M   from 0x0000000004002210
+  5          calls  inclIr=     0.00M   from _dl_map_object_from_fd
+  4          calls  inclIr=     0.00M   from _dl_allocate_tls_init
+  4          calls  inclIr=     0.00M   from _dl_init_paths
+  3          calls  inclIr=     0.00M   from _dl_relocate_object_no_relro
+  2          calls  inclIr=     0.00M   from _dl_relocate_object_no_relro
+  2          calls  inclIr=     0.00M   from 0x000000000713d960
+  1          calls  inclIr=     0.00M   from __tls_init_tp
+  1          calls  inclIr=     0.00M   from _dl_relocate_object_no_relro
+  1          calls  inclIr=     0.00M   from _dl_fixup
+  TOTAL calls = 165
+
+DONE
+
+
+===== callers of memcpy =====
+==== callers of *memcpy* ====
+  30         calls  inclIr=     3.18M   from 0x00000000040022d0
+  11         calls  inclIr=     0.00M   from _dl_map_object_deps
+  6          calls  inclIr=     0.00M   from strdup
+  6          calls  inclIr=     0.00M   from _dl_new_object
+  4          calls  inclIr=     0.00M   from _dl_load_cache_lookup
+  4          calls  inclIr=     2.00M   from 0x0000000004002260
+  3          calls  inclIr=     0.00M   from _dl_relocate_object_no_relro
+  2          calls  inclIr=     0.00M   from _dl_relocate_object_no_relro
+  2          calls  inclIr=     0.00M   from _dl_sort_maps
+  1          calls  inclIr=     0.00M   from _dl_relocate_object_no_relro
+  1          calls  inclIr=     0.00M   from handle_preload_list
+  1          calls  inclIr=     0.00M   from _dl_init_paths
+  TOTAL calls = 71
+
+DONE
+
+
+===== callers of fftMulModBm1Pre =====
+==== callers of *fftMulModBm1Pre* ====
+  6          calls  inclIr=    86.76M   from hint::Integer::absDivMu(hint::SpanTy<unsigned sho...
+  TOTAL calls = 6
+
+DONE
+
+
+===== callers of fftMulPre =====
+==== callers of *fftMulPre* ====
+  6          calls  inclIr=    54.38M   from hint::Integer::absDivMu(hint::SpanTy<unsigned sho...
+  TOTAL calls = 6
+
+DONE

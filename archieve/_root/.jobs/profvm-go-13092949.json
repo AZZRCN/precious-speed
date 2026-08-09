@@ -1,0 +1,17 @@
+{
+ "id": "profvm-go-13092949",
+ "name": "profvm-go",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "prof_vm.py",
+  "go"
+ ],
+ "pid": 13748,
+ "started": 1786113092.9582367,
+ "timeout": 900.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786113094.846853,
+ "out": "D:\\precious_speed\\.jobs\\profvm-go-13092949.out"
+}

@@ -1,0 +1,940 @@
+{
+  "swar_carry16": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 18:28:31",
+    "nodes": 5939252786,
+    "n_cands": 15,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 806988088,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 15,
+        "nodes": 868978355,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 873636273,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 878998998,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 848822217,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 855802853,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 806026002,
+        "rc": 2,
+        "timeout": false
+      }
+    ],
+    "elapsed": 702.4,
+    "end": "2026-08-07 18:40:14"
+  },
+  "divmod_10000_lt2p45": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 18:40:35",
+    "nodes": 214339216,
+    "n_cands": 272,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 1,
+        "nodes": 34992,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 28,
+        "nodes": 36216464,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 13,
+        "nodes": 35465910,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 27,
+        "nodes": 35463123,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 4,
+        "cands": 10,
+        "nodes": 35467860,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 5,
+        "cands": 29,
+        "nodes": 35448745,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 6,
+        "cands": 49,
+        "nodes": 36242122,
+        "rc": 0,
+        "timeout": false
+      }
+    ],
+    "elapsed": 40.3,
+    "end": "2026-08-07 18:41:16"
+  },
+  "divmod_2p16_lt2p45": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 14:42:49",
+    "nodes": 316763,
+    "n_cands": 94,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 21,
+        "nodes": 64182,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 17,
+        "nodes": 61819,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 19,
+        "nodes": 63170,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 2,
+        "nodes": 414,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 4,
+        "cands": 2,
+        "nodes": 801,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 5,
+        "cands": 23,
+        "nodes": 64998,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 6,
+        "cands": 22,
+        "nodes": 61379,
+        "rc": 0,
+        "timeout": false
+      }
+    ],
+    "elapsed": 0.4,
+    "end": "2026-08-07 14:42:49"
+  },
+  "carrystep_10000": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 18:40:14",
+    "nodes": 126055387,
+    "n_cands": 2,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 17977454,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 2,
+        "nodes": 19083039,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 18153087,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 17618889,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 17622624,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 17806882,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 17793412,
+        "rc": 2,
+        "timeout": false
+      }
+    ],
+    "elapsed": 21.3,
+    "end": "2026-08-07 18:40:35"
+  },
+  "digits4": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 14:58:52",
+    "nodes": 65358790656,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 9337372672,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 9372958720,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 9304932352,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 9373286400,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 9313583104,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 9353363456,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 9303293952,
+        "rc": 2,
+        "timeout": true
+      }
+    ],
+    "elapsed": 10800.5,
+    "end": "2026-08-07 17:58:53"
+  },
+  "digits2": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 18:43:17",
+    "nodes": 9956360192,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 1425342464,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 1423507456,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 1426784256,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 1422983168,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 1422589952,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 1413939200,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 1421213696,
+        "rc": 2,
+        "timeout": true
+      }
+    ],
+    "elapsed": 1200.4,
+    "end": "2026-08-07 19:03:18"
+  },
+  "str4toi_lean": {
+    "status": "running",
+    "nproc": 7,
+    "start": "2026-08-07 19:23:18",
+    "nodes": 290324480,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 40435712,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 41287680,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 42532864,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 42139648,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 40960000,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 40828928,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 42139648,
+        "rc": 2,
+        "timeout": true
+      }
+    ],
+    "elapsed": 60.2,
+    "end": "2026-08-07 18:14:15"
+  },
+  "digits2_lean": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 18:41:16",
+    "nodes": 762341879,
+    "n_cands": 1,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 79701772,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 1,
+        "nodes": 131399009,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 1,
+        "nodes": 129877936,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 119831466,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 110563293,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 112185917,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 78782486,
+        "rc": 2,
+        "timeout": false
+      }
+    ],
+    "elapsed": 121.9,
+    "end": "2026-08-07 18:43:17"
+  },
+  "T1": {
+    "status": "searched",
+    "nproc": 4,
+    "start": "2026-08-07 18:15:59",
+    "nodes": 990,
+    "n_cands": 1,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 299,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 1,
+        "nodes": 221,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 224,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 246,
+        "rc": 2,
+        "timeout": false
+      }
+    ],
+    "elapsed": 0.1,
+    "end": "2026-08-07 18:15:59"
+  },
+  "T2": {
+    "status": "searched",
+    "nproc": 4,
+    "start": "2026-08-07 18:15:59",
+    "nodes": 41819,
+    "n_cands": 1,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 13270,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 1,
+        "nodes": 8795,
+        "rc": 0,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 9157,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 10597,
+        "rc": 2,
+        "timeout": false
+      }
+    ],
+    "elapsed": 0.1,
+    "end": "2026-08-07 18:15:59"
+  },
+  "T3": {
+    "status": "searched",
+    "nproc": 4,
+    "start": "2026-08-07 18:15:59",
+    "nodes": 25,
+    "n_cands": 1,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 7,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 6,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 6,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 1,
+        "nodes": 6,
+        "rc": 0,
+        "timeout": false
+      }
+    ],
+    "elapsed": 0.1,
+    "end": "2026-08-07 18:15:59"
+  },
+  "T4": {
+    "status": "searched",
+    "nproc": 4,
+    "start": "2026-08-07 18:15:59",
+    "nodes": 134361938,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 42184676,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 28723402,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 30255003,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 33198857,
+        "rc": 2,
+        "timeout": false
+      }
+    ],
+    "elapsed": 27.6,
+    "end": "2026-08-07 18:16:27"
+  },
+  "T4fix": {
+    "status": "searched",
+    "nproc": 4,
+    "start": "2026-08-07 18:21:47",
+    "nodes": 134545408,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 33423360,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 33882112,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 33685504,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 33554432,
+        "rc": 2,
+        "timeout": true
+      }
+    ],
+    "elapsed": 35.2,
+    "end": "2026-08-07 18:22:22"
+  },
+  "digits2_leanest": {
+    "status": "searched",
+    "nproc": 1,
+    "start": "2026-08-07 18:42:39",
+    "nodes": 24480365,
+    "n_cands": 1,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 1,
+        "nodes": 24480365,
+        "rc": 0,
+        "timeout": false
+      }
+    ],
+    "elapsed": 24.1,
+    "end": "2026-08-07 18:43:03"
+  },
+  "split100": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 19:03:18",
+    "nodes": 9491972096,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 1351024640,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 1353646080,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 1355087872,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 1355350016,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 1363214336,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 1360592896,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 1353056256,
+        "rc": 2,
+        "timeout": true
+      }
+    ],
+    "elapsed": 1200.3,
+    "end": "2026-08-07 19:23:18"
+  },
+  "split100_leanest": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 21:02:32",
+    "nodes": 2401763328,
+    "n_cands": 2,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 349241344,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 346488832,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 2,
+        "cands": 2,
+        "nodes": 344653824,
+        "rc": 0,
+        "timeout": true
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 344915968,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 338427904,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 337248256,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 340787200,
+        "rc": 2,
+        "timeout": true
+      }
+    ],
+    "elapsed": 300.5,
+    "end": "2026-08-07 21:07:32"
+  },
+  "digits2x2_core": {
+    "status": "running",
+    "nproc": 7,
+    "start": "2026-08-07 21:07:32",
+    "nodes": 3091791872,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 441909248,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 444071936,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 444989440,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 441712640,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 441974784,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 439549952,
+        "rc": 2,
+        "timeout": true
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 437583872,
+        "rc": 2,
+        "timeout": true
+      }
+    ],
+    "elapsed": 420.3,
+    "end": "2026-08-07 21:00:19"
+  },
+  "split100_sA": {
+    "status": "searched",
+    "nproc": 7,
+    "start": "2026-08-07 21:37:33",
+    "nodes": 5072120409,
+    "n_cands": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "cands": 0,
+        "nodes": 882851608,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 1,
+        "cands": 0,
+        "nodes": 873146461,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 2,
+        "cands": 0,
+        "nodes": 905470863,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 3,
+        "cands": 0,
+        "nodes": 727060260,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 4,
+        "cands": 0,
+        "nodes": 547248019,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 5,
+        "cands": 0,
+        "nodes": 570465923,
+        "rc": 2,
+        "timeout": false
+      },
+      {
+        "shard": 6,
+        "cands": 0,
+        "nodes": 565877275,
+        "rc": 2,
+        "timeout": false
+      }
+    ],
+    "elapsed": 673.1,
+    "end": "2026-08-07 21:48:46"
+  },
+  "split100_sB": {
+    "status": "running",
+    "nproc": 7,
+    "start": "2026-08-07 21:48:46"
+  }
+}

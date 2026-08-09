@@ -1,0 +1,20 @@
+{
+  "name": "digits2_leanest",
+  "saved": "2026-08-07 18:43:03",
+  "verify": {
+    "kind": "digits2"
+  },
+  "n_cands": 1,
+  "cands": [
+    {
+      "cyc": 8.0,
+      "cp": 8,
+      "res": 2.0,
+      "uops": 5,
+      "insns": 5,
+      "exprs": {
+        "packed": "sub(shl(y,8),mul(2559,shr(mul(y,103),10)))"
+      }
+    }
+  ]
+}

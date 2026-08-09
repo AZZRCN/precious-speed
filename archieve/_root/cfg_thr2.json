@@ -1,0 +1,61 @@
+{
+  "name": "thr2",
+  "base_src": "best/div_D47.cpp",
+  "patch": [
+    {
+      "old": "if (len2 <= 64 || (len1 - len2) <= 64)",
+      "new": "if (len2 <= DIV_BASIC_LIMIT || (len1 - len2) <= DIV_BASIC_LIMIT)"
+    }
+  ],
+  "guard": "#ifndef DIV_BASIC_LIMIT\n#define DIV_BASIC_LIMIT 64\n#endif\n",
+  "variants": [
+    {
+      "name": "L64",
+      "defines": [
+        "DIV_BASIC_LIMIT=64"
+      ]
+    },
+    {
+      "name": "L96",
+      "defines": [
+        "DIV_BASIC_LIMIT=96"
+      ]
+    },
+    {
+      "name": "L128",
+      "defines": [
+        "DIV_BASIC_LIMIT=128"
+      ]
+    },
+    {
+      "name": "L168",
+      "defines": [
+        "DIV_BASIC_LIMIT=168"
+      ]
+    },
+    {
+      "name": "L224",
+      "defines": [
+        "DIV_BASIC_LIMIT=224"
+      ]
+    },
+    {
+      "name": "L320",
+      "defines": [
+        "DIV_BASIC_LIMIT=320"
+      ]
+    }
+  ],
+  "baseline": "L64",
+  "cases": [
+    "r_nearly_zero_01",
+    "burnikel_ziegler_bound_02",
+    "a_max_b_random_02",
+    "burnikel_ziegler_bound_00",
+    "length_ratio_integer_03",
+    "large_00"
+  ],
+  "reps": 25,
+  "warmup": 3,
+  "metric": "cycles"
+}

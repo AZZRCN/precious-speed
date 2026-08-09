@@ -1,0 +1,16 @@
+{
+ "id": "o23gap-28336715",
+ "name": "o23gap",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/run_o23gap.py"
+ ],
+ "pid": 9780,
+ "started": 1786028336.7187228,
+ "timeout": 3300.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786028360.2259028,
+ "out": "D:\\precious_speed\\.jobs\\o23gap-28336715.out"
+}

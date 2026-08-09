@@ -1,0 +1,17 @@
+{
+ "id": "thrscan-13254428",
+ "name": "thrscan",
+ "cmd": [
+  "python",
+  "thr_scan.py",
+  "D47"
+ ],
+ "pid": 4884,
+ "started": 1786113254.439575,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786113320.7662394,
+ "out": "D:\\precious_speed\\.jobs\\thrscan-13254428.out"
+}

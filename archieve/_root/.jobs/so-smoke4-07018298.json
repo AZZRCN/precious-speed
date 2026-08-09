@@ -1,0 +1,17 @@
+{
+ "id": "so-smoke4-07018298",
+ "name": "so-smoke4",
+ "cmd": [
+  "python",
+  "-c",
+  "\nimport sys; sys.path.insert(0,'superopt')\nimport so\nso.build_core()\nfor n,tl in [('split100_leanest',180.0),('digits2x2_core',420.0)]:\n    s=so.SPECS[n](); s['time_limit']=tl\n    c=so.search_parallel(s,nproc=7)\n    print('==',n,'->',len(c),'候选',flush=True)\n    for x in c[:3]: print('   ',x.get('exprs'),'insns',x.get('insns'),'cyc',x.get('cyc'),flush=True)\n"
+ ],
+ "pid": 9892,
+ "started": 1786107018.3075652,
+ "timeout": 900.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786107619.4567976,
+ "out": "D:\\precious_speed\\.jobs\\so-smoke4-07018298.out"
+}

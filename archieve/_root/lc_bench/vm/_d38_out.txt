@@ -1,0 +1,27 @@
+=== candidate D38  vs  ref d37 ===
+[1] PUSH ok -> /home/azzr/divbench/div_D38.cpp
+[2] COMPILE rc=0
+BUILD_DONE
+
+[3] BYTECHECK rc=0
+byte-exact d38    vs d25   (26 cases): ALL MATCH
+
+[4] burnikel_ziegler_bound_02      D38=272031467   d37=277652349
+      absAddMul1       D38=18732978   ( 6.89%)   d37=18732978   ( 6.75%)
+      absSubMul1       D38=36345725   (13.36%)   d37=-          (    -%)
+      absMul1          D38=-          (    -%)   d37=28029816   (10.10%)
+      absSub           D38=-          (    -%)   d37=22663189   ( 8.16%)
+[4] r_nearly_zero_01               D38=245423352   d37=262756864
+      absAddMul1       D38=14737295   ( 6.00%)   d37=14737295   ( 5.61%)
+      absSubMul1       D38=129408995  (52.73%)   d37=-          (    -%)
+      absMul1          D38=4833518    ( 1.97%)   d37=86544620   (32.94%)
+      absSub           D38=-          (    -%)   d37=63613437   (24.21%)
+      absDivBasicCore  D38=13939978   ( 5.68%)   d37=16916682   ( 6.44%)
+[4] length_ratio_integer_02        D38=285047453   d37=285054616
+
+--- D38 vs d37 (Ir) ---
+burnikel_ziegler_bound_02         277652349 ->    272031467   -2.02%
+r_nearly_zero_01                  262756864 ->    245423352   -6.60%
+length_ratio_integer_02           285054616 ->    285047453   -0.00%
+HEADLINE(max)     285054616 ->    285047453   -0.00%
+DONE

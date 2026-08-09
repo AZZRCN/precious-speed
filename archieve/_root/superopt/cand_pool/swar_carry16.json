@@ -1,0 +1,161 @@
+{
+  "name": "swar_carry16",
+  "saved": "2026-08-07 18:40:14",
+  "verify": {
+    "kind": "swar",
+    "nbits": 16
+  },
+  "n_cands": 15,
+  "cands": [
+    {
+      "cyc": 3.0,
+      "cp": 3,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "shr(xor(add(P,cin),lea2(P,G)),1)"
+      }
+    },
+    {
+      "cyc": 3.0,
+      "cp": 3,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "sub(andn(add(P,cin),lea2(P,G)),G)"
+      }
+    },
+    {
+      "cyc": 3.0,
+      "cp": 3,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "shr(xor(lea2(P,G),add(P,cin)),1)"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "shr(xor(P,lea2(add(P,cin),G)),1)"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "add(G,andn(lea2(add(P,cin),G),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "or(G,andn(lea2(add(P,cin),G),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "xor(G,andn(lea2(add(P,cin),G),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "shr(xor(P,add(cin,lea2(P,G))),1)"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "add(G,andn(add(cin,lea2(P,G)),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "or(G,andn(add(cin,lea2(P,G)),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "xor(G,andn(add(cin,lea2(P,G)),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "shr(xor(P,add(P,lea2(cin,G))),1)"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "add(G,andn(add(P,lea2(cin,G)),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "or(G,andn(add(P,lea2(cin,G)),P))"
+      }
+    },
+    {
+      "cyc": 4.0,
+      "cp": 4,
+      "res": 1.0,
+      "uops": 4,
+      "insns": 4,
+      "exprs": {
+        "cout": "xor(G,andn(add(P,lea2(cin,G)),P))"
+      }
+    }
+  ]
+}

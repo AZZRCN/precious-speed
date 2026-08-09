@@ -1,0 +1,17 @@
+{
+ "id": "profvm-up-13015142",
+ "name": "profvm-up",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "prof_vm.py",
+  "up"
+ ],
+ "pid": 10036,
+ "started": 1786113015.1524851,
+ "timeout": 900.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786113022.0906181,
+ "out": "D:\\precious_speed\\.jobs\\profvm-up-13015142.out"
+}

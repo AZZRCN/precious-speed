@@ -1,0 +1,16 @@
+{
+ "id": "so-night3-99732335",
+ "name": "so-night3",
+ "cmd": [
+  "python",
+  "superopt/run_night3.py"
+ ],
+ "pid": 14272,
+ "started": 1786099732.354624,
+ "timeout": 32400.0,
+ "cwd": "D:\\precious_speed",
+ "state": "killed",
+ "rc": null,
+ "ended": 1786102924.404196,
+ "out": "D:\\precious_speed\\.jobs\\so-night3-99732335.out"
+}

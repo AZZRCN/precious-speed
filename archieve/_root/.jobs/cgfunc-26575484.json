@@ -1,0 +1,17 @@
+{
+ "id": "cgfunc-26575484",
+ "name": "cgfunc",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/run_cgfunc.py",
+  "length_ratio_integer_02"
+ ],
+ "pid": 11252,
+ "started": 1786026575.4906738,
+ "timeout": 3300.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786026585.1307857,
+ "out": "D:\\precious_speed\\.jobs\\cgfunc-26575484.out"
+}

@@ -1,0 +1,20 @@
+=== WFTA_推广 原型实测结果 ===
+日期: 2026-07-31
+环境: g++ 15.2.0, Intel64 Family 6 Model 140, -std=c++20 -O2 -march=native
+
+--- 正确性验证 ---
+  8-point: 100 cases PASS
+  16-point: 100 cases PASS
+
+--- WFTA vs Standard FFT Benchmark ---
+         N    iters       std_ms      wfta_ms      ratio   status
+         8  2000000      19.4780      11.2140      0.576   *WFTA*  sink=22875229782
+        16  1000000     304.6000     158.6440      0.521   *WFTA*  sink=10310709012
+
+结论:
+- WFTA 8点比标准FFT快42.4% (ratio=0.576)
+- WFTA 16点比标准FFT快47.9% (ratio=0.521)
+- 标量版WFTA在小点数DFT上有显著速度优势
+- 但在mul.cpp集成中，WFTA 16/32标量版破坏SIMD流水线，导致大用例慢2-2.5%
+- 向量化方案不可行：mul1st与mul乘法次数相同，无法保持SIMD优势
+- 最终结论：WFTA 8已集成（-3.3%收益），WFTA 16/32不可行

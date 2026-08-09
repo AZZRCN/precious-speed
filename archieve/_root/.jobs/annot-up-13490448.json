@@ -1,0 +1,17 @@
+{
+ "id": "annot-up-13490448",
+ "name": "annot-up",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "cg_annot.py",
+  "up"
+ ],
+ "pid": 5280,
+ "started": 1786113490.4587615,
+ "timeout": 900.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786113497.7434697,
+ "out": "D:\\precious_speed\\.jobs\\annot-up-13490448.out"
+}

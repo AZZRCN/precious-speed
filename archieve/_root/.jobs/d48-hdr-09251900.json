@@ -1,0 +1,18 @@
+{
+ "id": "d48-hdr-09251900",
+ "name": "d48-hdr",
+ "cmd": [
+  "python",
+  "local_verify.py",
+  "D48",
+  "D47"
+ ],
+ "pid": 9624,
+ "started": 1786109251.9247293,
+ "timeout": 900.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786109288.6569812,
+ "out": "D:\\precious_speed\\.jobs\\d48-hdr-09251900.out"
+}

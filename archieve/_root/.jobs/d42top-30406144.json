@@ -1,0 +1,17 @@
+{
+ "id": "d42top-30406144",
+ "name": "d42top",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "-c",
+  "import sys;sys.path.insert(0,r'D:/precious_speed/lc_bench/vm');from vmctl import run;rc,o,e=run('cd /home/azzr/divbench && python3 _top_remote.py d42 length_ratio_integer_02 22',timeout=5000);print(o);print('ERR',e[:300])"
+ ],
+ "pid": 1172,
+ "started": 1786030406.1598718,
+ "timeout": 5400.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786030409.831306,
+ "out": "D:\\precious_speed\\.jobs\\d42top-30406144.out"
+}

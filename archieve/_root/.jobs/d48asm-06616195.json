@@ -1,0 +1,17 @@
+{
+ "id": "d48asm-06616195",
+ "name": "d48asm",
+ "cmd": [
+  "bash",
+  "-c",
+  "mkdir -p .verify_build && g++ -O2 -std=c++23 -march=x86-64-v3 -S best/div_D47.cpp -o .verify_build/d47.s && g++ -O2 -std=c++23 -march=x86-64-v3 -S best/div_D48.cpp -o .verify_build/d48.s && echo ASM_OK"
+ ],
+ "pid": 6060,
+ "started": 1786106616.2135272,
+ "timeout": 900.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786106630.1471403,
+ "out": "D:\\precious_speed\\.jobs\\d48asm-06616195.out"
+}

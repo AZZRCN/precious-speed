@@ -1,0 +1,19 @@
+{
+ "id": "cpsloop-30973710",
+ "name": "cpsloop",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/vm/_cps_loop.py",
+  "D41",
+  "D42",
+  "D44"
+ ],
+ "pid": 1748,
+ "started": 1786030973.7132168,
+ "timeout": 3600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786030989.5214946,
+ "out": "D:\\precious_speed\\.jobs\\cpsloop-30973710.out"
+}

@@ -1,0 +1,4 @@
+RC=0
+OUT=python3: can't open file '/home/azzr/divbench/cand_verify.py': [Errno 2] No such file or directory
+
+ERR=

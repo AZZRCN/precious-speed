@@ -1,0 +1,18 @@
+{
+ "id": "thr2b-go-14909258",
+ "name": "thr2b-go",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "vmbench.py",
+  "cfg_thr2.json",
+  "go"
+ ],
+ "pid": 9820,
+ "started": 1786114909.2670505,
+ "timeout": 3600.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786114969.5012808,
+ "out": "D:\\precious_speed\\.jobs\\thr2b-go-14909258.out"
+}

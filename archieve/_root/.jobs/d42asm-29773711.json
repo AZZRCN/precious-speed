@@ -1,0 +1,16 @@
+{
+ "id": "d42asm-29773711",
+ "name": "d42asm",
+ "cmd": [
+  "C:/Program Files/Python311/python.exe",
+  "lc_bench/vm/_d42_asm.py"
+ ],
+ "pid": 14072,
+ "started": 1786029773.7115517,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786029789.579693,
+ "out": "D:\\precious_speed\\.jobs\\d42asm-29773711.out"
+}

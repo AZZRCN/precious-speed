@@ -1,0 +1,18 @@
+{
+ "id": "d48-verify-05723859",
+ "name": "d48-verify",
+ "cmd": [
+  "python",
+  "local_verify.py",
+  "D48",
+  "D47"
+ ],
+ "pid": 5656,
+ "started": 1786105723.8661723,
+ "timeout": 1800.0,
+ "cwd": "D:\\precious_speed",
+ "state": "done",
+ "rc": null,
+ "ended": 1786105747.0819342,
+ "out": "D:\\precious_speed\\.jobs\\d48-verify-05723859.out"
+}
