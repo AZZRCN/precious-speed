@@ -6390,7 +6390,14 @@ template <typename Float, int DIV>
                     //   正确性: in>=块长 → Newton 商误差界 qhat∈±1; 线性卷积精确; cyclic 仅对 mu_in>=64 启用(已验证).
                     size_t in_used = mu_in;
                     if (in_used > len2) in_used = len2;
-                    bool allow_cyclic = (mu_in >= 64);
+                    // FIX (2026-08-09): 禁用块循环卷积 (2NXN cyclic)。
+                    // 根因: cyclic 路径最终修正只比较低 len2 位 (5964 行), 完全忽略余数高位
+                    // this_in 位; 当 r = window[len2]-tprod[len2] 单 limb 估计因 FFT/unwrap 浮点
+                    // 误差失效、qhat 偏小 1 且真实余数 >= B^len2 时无法检出, 该块商偏小并连锁污染
+                    // 后续块 (100 轮对拍 seed=34 / division "large" 实测炸: a=81479位 b=2531位)。
+                    // 改为精确线性卷积路径 (5971-6059), 含完整高位 remainder>=divisor 检查, 正确性
+                    // 有保证。逆元 Newton 的 cyclic 未涉及此 bug, 予以保留以保速。
+                    bool allow_cyclic = false;
                     if (in_used < 64)   in_used = 64;
                     absDivMu(dividend_span, divisor_span, quot_span, in_used, allow_cyclic);
                 }
