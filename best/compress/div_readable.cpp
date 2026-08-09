@@ -1,3 +1,4 @@
+/* VERIFIELD 派生压缩件 (readable) — 由 best/div_verified.cpp 经 gccg 压缩生成; 修复说明见该文件。 */
 #define pj };ah q0=h4(p0),q1=h4(p1);ah r0=j3(p0,fb(q0,gv));ah r1=j3(p1,fb(q1,gv));ah f4=iz(j2(q0,q1),0xD8);ah r16=iz(j2(r0,r1),0xD8);
 #define pk ah od=j4(ge(p,32),gw);ev=ge(ev,40);od=ge(od,40);ac na(ev,nc(od,32),0xAA);
 #define pl af()

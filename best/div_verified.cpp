@@ -1,4 +1,14 @@
 /*
+*/
+/* ============================================================
+ * VERIFIELD — 修复后的 DIV 源码 (已由 VM / Linux g++ 15.2.0 验证通过)
+ * 对应 LC 原始提交: #391180 (29 ms, Division of Big Integers); 原始未改件见 best/div_origin.cpp
+ * 唯一算法改动: absDivMu 分派处 allow_cyclic = false
+ *   (修复真实商错误: gen 'large' seed=34, a=81479位 / b=2531位, 商第22207位起错;
+ *    Python divmod 神谕确认 ref 正确、mine 违反 A=qB+r)。
+ * 验证须在本机 VM (Linux g++ 15.2.0, 即 LC 部署编译器) 进行; 本地 MinGW/g++ 结果不可信。
+ * ============================================================ */
+/*
 === LC 提交回执 (本文件即该次提交的源码, 已 diff 逐字节确认) ===
 Submission #391180  ==  ***  29 ms  ***  <<< 历史最佳 / 当前纪录持有者
 ID      Date                 Problem                   Lang    User          Status  Time    Memory

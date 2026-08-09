@@ -1,3 +1,4 @@
+/* VERIFIELD 派生压缩件 (unreadable) — 由 best/div_verified.cpp 经 gccg 压缩生成; 修复说明见该文件。 */
 #define pa (jy p)->jy{jy ev=na(p,bH)zj od=na(mt(p,32),bH);ev=mt(ev,40);od=mt(od,40);j8 oc(ev,og(od,32),0xAA);}zj q0=bq(p0),q1=bq(p1)zj r0=n9(p0,m8(q0,bF))zj r1=n9(p1,m8(q1,bF))zj m2=n7(n8(q0,q1),0xD8)zj r16=n7(n8(r0,r1),0xD8)zj qsh=o3(m2,nz(m2,m2,0x08),14)
 #define pb j7 aN=cJ/4,bC=aN*2,bD=aN*3;k8 lv=a00(ld(cA.kR lw=a00(ld(cB.kR it=ka<C2*a05;ke
 #define pc kH jG,l3(16384),l3(32768))
