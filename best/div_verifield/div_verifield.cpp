@@ -1,42 +1,11 @@
-/*
-=== LC 提交回执 (本文件即该次提交的源码, 已 diff 逐字节确认) ===
-Submission #391180  ==  ***  29 ms  ***  <<< 历史最佳 / 当前纪录持有者
-ID      Date                 Problem                   Lang    User          Status  Time    Memory
-391180  2026/8/7 11:16:23    Division of Big Integers  C++23   (Anonymous)   AC      29 ms   45.52 Mib
-
-  example_00                 AC   1 ms   0.76 Mib
-  small_00                   AC  12 ms  10.27 Mib
-  medium_00                  AC  16 ms   8.54 Mib
-  medium_01                  AC  23 ms   9.29 Mib
-  medium_02                  AC  24 ms   7.26 Mib
-  large_00                   AC  20 ms  12.78 Mib
-  large_01                   AC  22 ms  12.52 Mib
-  max_00                     AC   2 ms   2.76 Mib
-  max_01                     AC   5 ms   6.75 Mib
-  max_02                     AC   3 ms   6.79 Mib
-  a_max_b_random_00          AC  15 ms  22.30 Mib
-  a_max_b_random_01          AC  20 ms  45.52 Mib
-  a_max_b_random_02          AC  29 ms  39.91 Mib   <-- headline 并列最高点
-  r_nearly_zero_00           AC  15 ms   8.04 Mib
-  r_nearly_zero_01           AC  29 ms   4.80 Mib   <-- headline 并列最高点
-  r_nearly_zero_02           AC  28 ms   9.26 Mib
-  length_ratio_integer_00    AC  27 ms  36.54 Mib
-  length_ratio_integer_01    AC  25 ms  35.52 Mib
-  length_ratio_integer_02    AC  28 ms  25.27 Mib
-  length_ratio_integer_03    AC  25 ms  25.13 Mib
-  length_ratio_integer_04    AC  24 ms  20.28 Mib
-  length_ratio_integer_05    AC  25 ms  14.89 Mib
-  burnikel_ziegler_bound_00  AC  25 ms   9.29 Mib
-  burnikel_ziegler_bound_01  AC  24 ms   8.54 Mib
-  burnikel_ziegler_bound_02  AC  29 ms   8.79 Mib   <-- headline 并列最高点
-  burnikel_ziegler_bound_03  AC  23 ms   7.80 Mib
-
-版本 = D45(内联汇编 mulx 魔数常驻 RDX + 大页 hparena) + D46 radix-5 mixed-radix + D47 FFT5_MAX=256 限幅
-破前纪录 #391066 = 30 ms (D45)
-备份原件: best/div_best_tmp_20260807111623.cpp ; 记录: submit_history/391180_D47_29ms_BEST.md
-!! headline 由 a_max_b_random_02 / r_nearly_zero_01 / burnikel_ziegler_bound_02 三点并列撑住,
-   只压 r_nearly_zero_01 单点不会掉分, 必须三点齐降。
-*/
+/* ============================================================
+ * VERIFIELD - 修复版除法 (在 LC 原始提交 #391180 原件基础上打一处修复)
+ * 基文件: best/origin/div.cpp (用户保证的 LC 原件)
+ * 唯一算法改动: absDivMu 分派处 allow_cyclic = false
+ *   (修复真实商错误: gen 'large' seed=34, a=81479位 / b=2531位, 商第22207位起错;
+ *    Python divmod 神谕确认 ref 正确、mine 违反 A=qB+r)
+ * 验收/编译权威: 本机 VM (Linux g++ 15.2.0 = LC 部署编译器); 本地 MinGW/g++ 不可信。
+ * ============================================================ */
 // AZZRCN
 // https://github.com/AZZRCN
 //
@@ -307,7 +276,8 @@ inline std::map<std::tuple<int, size_t, size_t>, size_t> &ceilHist()
                      100.0 * (double(used) / double(need) - 1.0), wu - wn);
             rows.emplace_back(wu - wn, buf);
         }
-);
+        std::sort(rows.begin(), rows.end(),
+                  [](const auto &a, const auto &b) { return a.first > b.first; });
         fprintf(stderr, "==== fft_ceil need->used (top 20 by wasted N*logN) ====\n");
         for (size_t i = 0; i < rows.size() && i < 20; i++)
             fprintf(stderr, "%s\n", rows[i].second.c_str());
@@ -392,7 +362,8 @@ inline std::map<InvProfKey, std::pair<double, size_t>> &invProfRecs()
                      "k", "s", "rn", "mn", "cyc", "self_ms", "n", "pct");
         std::vector<std::pair<double, InvProfKey>> rows;
         for (auto &kv : mm) rows.push_back({kv.second.first, kv.first});
-);
+        std::sort(rows.begin(), rows.end(),
+                  [](const auto &a, const auto &b) { return a.first > b.first; });
         size_t shown = 0;
         for (auto &r : rows)
         {
@@ -458,6 +429,7 @@ struct InvProfScope
 #ifdef PROFILE_DIV
 static FILE *_prof_fp = nullptr;
 static inline void _prof_init() { if (!_prof_fp) _prof_fp = std::fopen("prof_detail.log", "w"); }
+static inline void _prof_flush() { if (_prof_fp) { std::fflush(_prof_fp); } }
 #define PROF_PRINT(...) do { _prof_init(); if (_prof_fp) std::fprintf(_prof_fp, __VA_ARGS__); } while(0)
 #else
 #define PROF_PRINT(...) ((void)0)
@@ -822,7 +794,34 @@ namespace hint
         return result;
     }
 
-constexpr uint32_t bitrev32(uint32_t n)
+    constexpr int hint_popcnt(uint32_t n)
+    {
+        constexpr uint32_t mask55 = 0x55555555;
+        constexpr uint32_t mask33 = 0x33333333;
+        constexpr uint32_t mask0f = 0x0f0f0f0f;
+        constexpr uint32_t maskff = 0x00ff00ff;
+        n = (n & mask55) + ((n >> 1) & mask55);
+        n = (n & mask33) + ((n >> 2) & mask33);
+        n = (n & mask0f) + ((n >> 4) & mask0f);
+        n = (n & maskff) + ((n >> 8) & maskff);
+        return uint16_t(n) + (n >> 16);
+    }
+    constexpr int hint_popcnt(uint64_t n)
+    {
+        constexpr uint64_t mask5555 = 0x5555555555555555;
+        constexpr uint64_t mask3333 = 0x3333333333333333;
+        constexpr uint64_t mask0f0f = 0x0f0f0f0f0f0f0f0f;
+        constexpr uint64_t mask00ff = 0x00ff00ff00ff00ff;
+        constexpr uint64_t maskffff = 0x0000ffff0000ffff;
+        n = (n & mask5555) + ((n >> 1) & mask5555);
+        n = (n & mask3333) + ((n >> 2) & mask3333);
+        n = (n & mask0f0f) + ((n >> 4) & mask0f0f);
+        n = (n & mask00ff) + ((n >> 8) & mask00ff);
+        n = (n & maskffff) + ((n >> 16) & maskffff);
+        return uint32_t(n) + (n >> 32);
+    }
+
+    constexpr uint32_t bitrev32(uint32_t n)
     {
         constexpr uint32_t mask55 = 0x55555555;
         constexpr uint32_t mask33 = 0x33333333;
@@ -1168,8 +1167,31 @@ constexpr uint32_t bitrev32(uint32_t n)
                 }
             }
             // RIRI -> RRRR|IIII (只在 dif<true> 最外层用一次)
-// RRRR|IIII -> RIRI (只在 idit<true> 最外层用一次)
-template <typename Float, int DIV>
+            inline void packC4RIRI(double *p, size_t n)
+            {
+                for (size_t i = 0; i + 8 <= n; i += 8)
+                {
+                    const __m256d a = _mm256_load_pd(p + i);
+                    const __m256d b = _mm256_load_pd(p + i + 4);
+                    _mm256_store_pd(p + i, _mm256_permute4x64_pd(_mm256_unpacklo_pd(a, b), 0xD8));
+                    _mm256_store_pd(p + i + 4, _mm256_permute4x64_pd(_mm256_unpackhi_pd(a, b), 0xD8));
+                }
+            }
+            // RRRR|IIII -> RIRI (只在 idit<true> 最外层用一次)
+            inline void unpackC4RIRI(double *p, size_t n)
+            {
+                for (size_t i = 0; i + 8 <= n; i += 8)
+                {
+                    const __m256d r = _mm256_load_pd(p + i);
+                    const __m256d m = _mm256_load_pd(p + i + 4);
+                    const __m256d lo = _mm256_unpacklo_pd(r, m);
+                    const __m256d hi = _mm256_unpackhi_pd(r, m);
+                    _mm256_store_pd(p + i, _mm256_permute2f128_pd(lo, hi, 0x20));
+                    _mm256_store_pd(p + i + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+                }
+            }
+
+            template <typename Float, int DIV>
             struct FFTTable
             {
                 using C2 = Complex2<Float>;
@@ -2634,7 +2656,17 @@ template <typename Float, int DIV>
             }
         }
     }
-// 64KB 查表法：2 字节 ASCII → 0-99 (从 fusion.cpp 移植)
+    constexpr size_t count_base10(uint64_t num)
+    {
+        size_t count = 0;
+        while (num)
+        {
+            num /= 10;
+            count++;
+        }
+        return count;
+    }
+    // 64KB 查表法：2 字节 ASCII → 0-99 (从 fusion.cpp 移植)
     struct ParseTable {
         uint8_t table[0x10000];
         constexpr ParseTable() : table() {
@@ -2689,7 +2721,34 @@ template <typename Float, int DIV>
     }
     // OPT: AVX2 向量化 uint16→double 转换 (16 元素/次), 替代 std::copy 的标量逐元素转换
     // 用于 FFT 输入准备: limb 数组 (uint16) → double 缓冲区
-// OPT: Merge copyU16ToF64 + std::fill into single pass to reduce memory traffic
+    inline void copyU16ToF64(const uint16_t *src, double *dst, size_t n)
+    {
+        size_t j = 0;
+#if defined(__AVX2__)
+        for (; j + 16 <= n; j += 16)
+        {
+            // 加载 32 字节 = 16 个 uint16, 拆成高低各 8 个
+            __m256i vals = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(src + j));
+            __m128i lo128 = _mm256_castsi256_si128(vals);      // 低 8 字节 = src[j..j+7]
+            __m128i hi128 = _mm256_extracti128_si256(vals, 1); // 高 8 字节 = src[j+8..j+15]
+            __m256i lo32 = _mm256_cvtepu16_epi32(lo128);       // 低 8 个 uint16 → 8 个 int32
+            __m256i hi32 = _mm256_cvtepu16_epi32(hi128);       // 高 8 个 uint16 → 8 个 int32
+            __m256d d0 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(lo32));
+            __m256d d1 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(lo32, 1));
+            __m256d d2 = _mm256_cvtepi32_pd(_mm256_castsi256_si128(hi32));
+            __m256d d3 = _mm256_cvtepi32_pd(_mm256_extracti128_si256(hi32, 1));
+            _mm256_storeu_pd(dst + j, d0);
+            _mm256_storeu_pd(dst + j + 4, d1);
+            _mm256_storeu_pd(dst + j + 8, d2);
+            _mm256_storeu_pd(dst + j + 12, d3);
+        }
+#endif
+        for (; j < n; j++)
+        {
+            dst[j] = src[j];
+        }
+    }
+    // OPT: Merge copyU16ToF64 + std::fill into single pass to reduce memory traffic
     // Copies n uint16 to double, then fills remaining [n, total) with 0.0
     inline void copyU16ToF64AndFill(const uint16_t *src, double *dst, size_t n, size_t total)
     {
@@ -6390,7 +6449,7 @@ template <typename Float, int DIV>
                     //   正确性: in>=块长 → Newton 商误差界 qhat∈±1; 线性卷积精确; cyclic 仅对 mu_in>=64 启用(已验证).
                     size_t in_used = mu_in;
                     if (in_used > len2) in_used = len2;
-                    bool allow_cyclic = (mu_in >= 64);
+                    bool allow_cyclic = false;
                     if (in_used < 64)   in_used = 64;
                     absDivMu(dividend_span, divisor_span, quot_span, in_used, allow_cyclic);
                 }
