@@ -1,0 +1,21 @@
+import paramiko
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('192.168.1.55', username='azzr', password="REDACTED", timeout=30)
+def run(c):
+    _, o, e = ssh.exec_command(c)
+    return o.read().decode(errors='replace') + e.read().decode(errors='replace')
+
+print('=== bench_max.in ===')
+print(run('cd /home/azzr/divbench && ls -la bench_max.in; head -c 60 bench_max.in; echo; echo "lines:"; wc -l bench_max.in'))
+print('=== div_v9 native run ===')
+print(run('cd /home/azzr/divbench && timeout 60 ./div_v9 < bench_max.in > /tmp/o.txt 2>/tmp/e.txt; echo "RC=$?"; wc -c /tmp/o.txt; tail -2 /tmp/e.txt'))
+print('=== current cg_div_v9.log ===')
+print(run('cat /home/azzr/divbench/cg_div_v9.log; echo "---size---"; wc -c /home/azzr/divbench/cg_div_v9.log'))
+print('=== gccg/div.cpp head ===')
+print(run('head -16 /home/azzr/gccg/div.cpp'))
+print('=== ib24.cpp head ===')
+print(run('head -10 /home/azzr/hexbench/div/ib24.cpp'))
+print('=== ib96.cpp head ===')
+print(run('head -10 /home/azzr/hexbench/div/ib96.cpp'))
+ssh.close()

@@ -1,0 +1,12 @@
+import paramiko
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('192.168.1.55', username='azzr', password="REDACTED", timeout=30)
+sftp = ssh.open_sftp()
+sftp.put('D:/hex_precious_speed/tools/do_final.sh', '/home/azzr/divbench/do_final.sh')
+sftp.close()
+_, o, e = ssh.exec_command('bash /home/azzr/divbench/do_final.sh')
+print(o.read().decode(errors='replace'))
+print('--- stderr ---')
+print(e.read().decode(errors='replace'))
+ssh.close()

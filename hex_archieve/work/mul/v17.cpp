@@ -1,0 +1,1243 @@
+// AZZRCN
+// https://github.com/AZZRCN
+// HEX multiplication v1
+//  I/O   : read(2) 整读 + AVX2 分词 + 掩码化 SSE hex 解析 + 一次 write(2)
+//  small : la,lb<=32 走 128x128->256 bit 快路径 (覆盖 small_00 全部)
+//  mid   : comba schoolbook
+//  big   : AVX2 复数 FFT (移植自 DEC mul 榜一, radix-2 DIF/DIT + 深度优先递归)
+// 注意: 绝不使用 #pragma GCC optimize —— LC 会 CE。只允许 target。
+#pragma GCC target("avx2,fma,bmi,bmi2,popcnt,lzcnt")
+
+#include <cstdint>
+#include <cstring>
+#include <cstdlib>
+#include <cmath>
+#include <complex>
+#include <vector>
+#include <immintrin.h>
+#include <unistd.h>
+#include <sys/mman.h>
+
+using u32 = uint32_t;
+using u64 = uint64_t;
+using u128 = __uint128_t;
+
+static constexpr int PAD = 128;
+static constexpr int INCAP = 9 << 20;
+static constexpr int OUTCAP = 10 << 20;
+static constexpr int MAXC = 100010;   // 1.6M hex / 16
+static constexpr size_t HP = 1u << 21;   // 2 MiB 透明大页
+
+alignas(HP) static char inbuf_[PAD + INCAP + PAD];
+alignas(HP) static char outbuf[OUTCAP + 256];
+static char* const inbuf = inbuf_ + PAD;
+alignas(HP) static u64 A[MAXC + 8], B[MAXC + 8], Rr[2 * MAXC + 16];
+
+// FFT 实数缓冲: lm 最大 2^20 (u<=200020 limbs, kk=14 -> coeffs<=914378)
+static constexpr u32 LMMAX = 1u << 20;
+alignas(HP) static double FB[LMMAX], GB[LMMAX];
+
+// BSS ~38 MiB, 4 KiB 页需 ~9700 次 minor fault (实测 sys≈13.5ms, 与 user 相当)。
+// THP=madvise 时内核不主动给 2 MiB 页, 必须显式申请。
+// LC 若 THP=always 本调用无害; 若 never 则退化原状, 也无害。
+static inline void hugify(void* p, size_t n) {
+#ifdef MADV_HUGEPAGE
+    madvise(p, n, MADV_HUGEPAGE);
+#endif
+}
+
+// ============================ hex I/O ============================
+struct MaskTab {
+    uint8_t m[17][16];
+    constexpr MaskTab() : m{} {
+        for (int L = 0; L <= 16; ++L)
+            for (int i = 0; i < 16; ++i) m[L][i] = (i >= 16 - L) ? 0xFF : 0x00;
+    }
+};
+alignas(64) static constexpr MaskTab MT{};
+
+static inline __m128i a2n(__m128i v) {
+    __m128i s0 = _mm_sub_epi8(v, _mm_set1_epi8('0'));
+    __m128i sa = _mm_sub_epi8(_mm_or_si128(v, _mm_set1_epi8(0x20)), _mm_set1_epi8('a' - 10));
+    __m128i gt = _mm_cmpgt_epi8(s0, _mm_set1_epi8(9));
+    return _mm_blendv_epi8(s0, sa, gt);
+}
+static inline u64 hexfull(const char* end) {
+    __m128i nib = a2n(_mm_loadu_si128((const __m128i*)(end - 16)));
+    __m128i b = _mm_maddubs_epi16(nib, _mm_set1_epi16(0x0110));
+    b = _mm_packus_epi16(b, b);
+    return __builtin_bswap64((u64)_mm_cvtsi128_si64(b));
+}
+static inline u64 hexpart(const char* end, int L) {
+    __m128i nib = a2n(_mm_loadu_si128((const __m128i*)(end - 16)));
+    nib = _mm_and_si128(nib, _mm_load_si128((const __m128i*)MT.m[L]));
+    __m128i b = _mm_maddubs_epi16(nib, _mm_set1_epi16(0x0110));
+    b = _mm_packus_epi16(b, b);
+    return __builtin_bswap64((u64)_mm_cvtsi128_si64(b));
+}
+static inline void hex16_store(u64 val, char* out) {
+    val = __builtin_bswap64(val);
+    __m128i v = _mm_cvtsi64_si128((long long)val);
+    __m128i hi = _mm_and_si128(_mm_srli_epi16(v, 4), _mm_set1_epi8(0x0F));
+    __m128i lo = _mm_and_si128(v, _mm_set1_epi8(0x0F));
+    __m128i nib = _mm_unpacklo_epi8(hi, lo);
+    __m128i gt9 = _mm_cmpgt_epi8(nib, _mm_set1_epi8(9));
+    __m128i asc = _mm_add_epi8(nib, _mm_set1_epi8('0'));
+    __m128i alp = _mm_add_epi8(nib, _mm_set1_epi8('A' - 10));
+    _mm_storeu_si128((__m128i*)out, _mm_or_si128(_mm_andnot_si128(gt9, asc), _mm_and_si128(gt9, alp)));
+}
+static inline int tok_len(const char* p) {
+    const __m256i sp = _mm256_set1_epi8(' ');
+    __m256i v = _mm256_loadu_si256((const __m256i*)p);
+    u32 m = ~(u32)_mm256_movemask_epi8(_mm256_cmpgt_epi8(v, sp));
+    if (m) return (int)_tzcnt_u32(m);
+    int n = 32;
+    for (;;) {
+        v = _mm256_loadu_si256((const __m256i*)(p + n));
+        m = ~(u32)_mm256_movemask_epi8(_mm256_cmpgt_epi8(v, sp));
+        if (m) return n + (int)_tzcnt_u32(m);
+        n += 32;
+    }
+}
+static inline int parse_limbs(const char* s, int n, u64* out) {
+    int nc = (n + 15) >> 4;
+    const char* end = s + n;
+    int full = nc - 1;
+    for (int c = 0; c < full; ++c) out[c] = hexfull(end - (c << 4));
+    int rem = n - (full << 4);
+    out[full] = hexpart(s + rem, rem);
+    return nc;
+}
+
+// ============================ AVX2 FFT ============================
+// 移植自 DEC mul 榜一实现: bit-reversed twiddle 表 + radix-2 DIF/DIT +
+// 深度优先递归 (子树落入 L2 后不再往返 L3) + 实序列打包点乘。
+#ifndef FFT_LEAF_LOG
+#define FFT_LEAF_LOG 11
+#endif
+
+namespace fft {
+using cpx = __m128d;
+// v10c: 两级 twiddle 表 (外提高位分量, 带跨块保护)。原 4 MiB 平表 -> 16 KiB base 表 (常驻 L1)。
+// twg(i) = base[i & mask] * base[halfSize | (i >> halfLog)]  (原 resize 的构造式)
+// 代价 1 复乘 (FP 端口仅 39%% 占用, 有富余); 收益 L2 miss -25%%。
+alignas(64) static __m128d twbase[1u << 12];
+static u32 twHalfLog = 0, twHalfSize = 0, twHalfMask = 0, twN = 0;
+
+static inline cpx cmul(cpx a, cpx b) {
+    return _mm_fmaddsub_pd(_mm_unpacklo_pd(a, a), b, _mm_mul_pd(_mm_unpackhi_pd(a, a), _mm_permute_pd(b, 1)));
+}
+static inline cpx cmulconj(cpx a, cpx b) {  // a * conj(b)
+    return _mm_fmsubadd_pd(_mm_unpacklo_pd(b, b), a, _mm_mul_pd(_mm_unpackhi_pd(b, b), _mm_permute_pd(a, 1)));
+}
+static inline cpx cmulspec(cpx a, cpx b) {
+    return _mm_fmadd_pd(_mm_unpacklo_pd(a, a), b, _mm_mul_pd(_mm_unpackhi_pd(a, a), _mm_permute_pd(b, 1)));
+}
+static inline cpx cscale(cpx a, double s) { return _mm_mul_pd(a, _mm_set1_pd(s)); }
+
+static void resize(u32 n) {  // n = 复数点数; 只建 16 KiB 的 base 表
+    if (n == twN) return;
+    twN = n;
+    const u32 halfLog = (u32)(31 - __builtin_clz(n)) >> 1, halfSize = 1u << halfLog;
+    twHalfLog = halfLog; twHalfSize = halfSize; twHalfMask = halfSize - 1;
+    const double a0 = std::acos(-1.0) / halfSize, a1 = a0 / halfSize;
+    for (u32 i = 0, j = (halfSize * 3) >> 1, p = 0; i != halfSize; p -= halfSize - (j >> __builtin_ctz(++i))) {
+        int32_t sp = (int32_t)p;
+        std::complex<double> f = std::polar(1.0, sp * a0), s = std::polar(1.0, sp * a1);
+        twbase[i] = _mm_set_pd(f.imag(), f.real());
+        twbase[i | halfSize] = _mm_set_pd(s.imag(), s.real());
+    }
+}
+// 两级查表: 1 次 L1 load(低位) + 1 次 L1 load(高位) + 1 复乘
+static inline cpx twg(u32 i) {
+    return cmul(twbase[i & twHalfMask], twbase[twHalfSize | (i >> twHalfLog)]);
+}
+// 高位分量提到循环外时用: 低位 lo, 高位分量 hi 已备好
+static inline cpx twlo(u32 i, cpx hi) { return cmul(twbase[i & twHalfMask], hi); }
+static inline cpx twhi(u32 i) { return twbase[twHalfSize | (i >> twHalfLog)]; }
+// tw[2i+1] == tw[2i] * i (dump 验证的恒等式) -> 省一次 load + 一次复乘
+static inline cpx mulI(cpx z) {   // [re,im] -> [-im,re]
+    return _mm_xor_pd(_mm_shuffle_pd(z, z, 1), _mm_set_pd(0.0, -0.0));
+}
+
+static inline void bfPlain(cpx* s, u32 bs) {
+    cpx* e = s + bs;
+    cpx* p = s;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x = _mm256_loadu_pd((const double*)p);
+        __m256d y = _mm256_loadu_pd((const double*)(p + bs));
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(x, y));
+        _mm256_storeu_pd((double*)(p + bs), _mm256_sub_pd(x, y));
+    }
+    if (p != e) {
+        cpx x = *p, y = p[bs];
+        *p = _mm_add_pd(x, y), p[bs] = _mm_sub_pd(x, y);
+    }
+}
+static inline void bfFwd(cpx* s, u32 bs, cpx w) {
+    const __m256d w256 = _mm256_set_m128d(w, w);
+    const __m256d wsw = _mm256_permute_pd(w256, 0x5);
+    cpx* e = s + bs;
+    cpx* p = s;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x = _mm256_loadu_pd((const double*)p);
+        __m256d y = _mm256_loadu_pd((const double*)(p + bs));
+        __m256d ylo = _mm256_unpacklo_pd(y, y), yhi = _mm256_unpackhi_pd(y, y);
+        __m256d ym = _mm256_fmaddsub_pd(ylo, w256, _mm256_mul_pd(yhi, wsw));
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(x, ym));
+        _mm256_storeu_pd((double*)(p + bs), _mm256_sub_pd(x, ym));
+    }
+    if (p != e) {
+        cpx x = *p, y = cmul(p[bs], w);
+        *p = _mm_add_pd(x, y), p[bs] = _mm_sub_pd(x, y);
+    }
+}
+static inline void bfInv(cpx* s, u32 bs, cpx w) {
+    const __m256d w256 = _mm256_set_m128d(w, w);
+    const __m256d wlo = _mm256_unpacklo_pd(w256, w256), whi = _mm256_unpackhi_pd(w256, w256);
+    cpx* e = s + bs;
+    cpx* p = s;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x = _mm256_loadu_pd((const double*)p);
+        __m256d y = _mm256_loadu_pd((const double*)(p + bs));
+        __m256d d = _mm256_sub_pd(x, y);
+        __m256d ds = _mm256_permute_pd(d, 0x5);
+        __m256d o = _mm256_fmsubadd_pd(wlo, d, _mm256_mul_pd(whi, ds));
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(x, y));
+        _mm256_storeu_pd((double*)(p + bs), o);
+    }
+    if (p != e) {
+        cpx x = *p, y = p[bs];
+        *p = _mm_add_pd(x, y), p[bs] = cmulconj(_mm_sub_pd(x, y), w);
+    }
+}
+
+// ---- radix-2^2: 两层融合, 中间结果留寄存器, load/store 往返减半 ----
+static inline __m256d cmul4(__m256d y, __m256d wb, __m256d wsw) {  // y * w
+    __m256d ylo = _mm256_unpacklo_pd(y, y), yhi = _mm256_unpackhi_pd(y, y);
+    return _mm256_fmaddsub_pd(ylo, wb, _mm256_mul_pd(yhi, wsw));
+}
+static inline __m256d cmulv(__m256d a, __m256d b) {  // 逐 lane 复数乘 (2 组)
+    return _mm256_fmaddsub_pd(_mm256_unpacklo_pd(a, a), b,
+                              _mm256_mul_pd(_mm256_unpackhi_pd(a, a), _mm256_permute_pd(b, 0x5)));
+}
+static inline __m256d cmulconj4(__m256d y, __m256d wlo, __m256d whi) {  // y * conj(w)
+    return _mm256_fmsubadd_pd(wlo, y, _mm256_mul_pd(whi, _mm256_permute_pd(y, 0x5)));
+}
+// 逐 lane 的 a*conj(b) (b 是向量而非广播标量; 供混合 radix 顶层蝶形使用)
+static inline __m256d cmulconjv(__m256d a, __m256d b) {
+    return _mm256_fmsubadd_pd(_mm256_unpacklo_pd(b, b), a,
+                              _mm256_mul_pd(_mm256_unpackhi_pd(b, b), _mm256_permute_pd(a, 0x5)));
+}
+static inline __m256d mulI4(__m256d z) {   // [re,im] -> [-im,re], 2 组
+    return _mm256_xor_pd(_mm256_permute_pd(z, 0x5), _mm256_set_pd(0.0, -0.0, 0.0, -0.0));
+}
+#define BC4(w) _mm256_set_m128d((w), (w))
+
+// DIF: 层1 系数 w0 (跨度 bs=2q), 层2 左半 w1 / 右半 w2 (跨度 q)
+static inline void bf2Fwd(cpx* s, u32 q, cpx w0, cpx w1, cpx w2) {
+    const u32 bs = q << 1;
+    const __m256d W0 = BC4(w0), W0s = _mm256_permute_pd(W0, 0x5);
+    const __m256d W1 = BC4(w1), W1s = _mm256_permute_pd(W1, 0x5);
+    const __m256d W2 = BC4(w2), W2s = _mm256_permute_pd(W2, 0x5);
+    cpx* e = s + q;
+    cpx* p = s;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x0 = _mm256_loadu_pd((const double*)p);
+        __m256d x1 = _mm256_loadu_pd((const double*)(p + q));
+        __m256d t2 = cmul4(_mm256_loadu_pd((const double*)(p + bs)), W0, W0s);
+        __m256d t3 = cmul4(_mm256_loadu_pd((const double*)(p + bs + q)), W0, W0s);
+        __m256d a0 = _mm256_add_pd(x0, t2), a2 = _mm256_sub_pd(x0, t2);
+        __m256d a1 = _mm256_add_pd(x1, t3), a3 = _mm256_sub_pd(x1, t3);
+        __m256d u1 = cmul4(a1, W1, W1s), u3 = cmul4(a3, W2, W2s);
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(a0, u1));
+        _mm256_storeu_pd((double*)(p + q), _mm256_sub_pd(a0, u1));
+        _mm256_storeu_pd((double*)(p + bs), _mm256_add_pd(a2, u3));
+        _mm256_storeu_pd((double*)(p + bs + q), _mm256_sub_pd(a2, u3));
+    }
+    if (p != e) {  // q == 1
+        cpx x0 = p[0], x1 = p[q], t2 = cmul(p[bs], w0), t3 = cmul(p[bs + q], w0);
+        cpx a0 = _mm_add_pd(x0, t2), a2 = _mm_sub_pd(x0, t2);
+        cpx a1 = _mm_add_pd(x1, t3), a3 = _mm_sub_pd(x1, t3);
+        cpx u1 = cmul(a1, w1), u3 = cmul(a3, w2);
+        p[0] = _mm_add_pd(a0, u1); p[q] = _mm_sub_pd(a0, u1);
+        p[bs] = _mm_add_pd(a2, u3); p[bs + q] = _mm_sub_pd(a2, u3);
+    }
+}
+static inline void bf2FwdOne(cpx* s, u32 q, cpx w2) {  // w0 == w1 == 1
+    const u32 bs = q << 1;
+    const __m256d W2 = BC4(w2), W2s = _mm256_permute_pd(W2, 0x5);
+    cpx* e = s + q;
+    cpx* p = s;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x0 = _mm256_loadu_pd((const double*)p);
+        __m256d x1 = _mm256_loadu_pd((const double*)(p + q));
+        __m256d t2 = _mm256_loadu_pd((const double*)(p + bs));
+        __m256d t3 = _mm256_loadu_pd((const double*)(p + bs + q));
+        __m256d a0 = _mm256_add_pd(x0, t2), a2 = _mm256_sub_pd(x0, t2);
+        __m256d a1 = _mm256_add_pd(x1, t3), a3 = _mm256_sub_pd(x1, t3);
+        __m256d u3 = cmul4(a3, W2, W2s);
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(a0, a1));
+        _mm256_storeu_pd((double*)(p + q), _mm256_sub_pd(a0, a1));
+        _mm256_storeu_pd((double*)(p + bs), _mm256_add_pd(a2, u3));
+        _mm256_storeu_pd((double*)(p + bs + q), _mm256_sub_pd(a2, u3));
+    }
+    if (p != e) {
+        cpx x0 = p[0], x1 = p[q], t2 = p[bs], t3 = p[bs + q];
+        cpx a0 = _mm_add_pd(x0, t2), a2 = _mm_sub_pd(x0, t2);
+        cpx a1 = _mm_add_pd(x1, t3), a3 = _mm_sub_pd(x1, t3);
+        cpx u3 = cmul(a3, w2);
+        p[0] = _mm_add_pd(a0, a1); p[q] = _mm_sub_pd(a0, a1);
+        p[bs] = _mm_add_pd(a2, u3); p[bs + q] = _mm_sub_pd(a2, u3);
+    }
+}
+// DIT: 内层 (跨度 q) 系数 w1/w2, 外层 (跨度 2q) 系数 w0; 全部乘 conj
+static inline void bf2Inv(cpx* s, u32 q, cpx w0, cpx w1, cpx w2) {
+    const u32 bs = q << 1;
+    const __m256d W0 = BC4(w0), W0l = _mm256_unpacklo_pd(W0, W0), W0h = _mm256_unpackhi_pd(W0, W0);
+    const __m256d W1 = BC4(w1), W1l = _mm256_unpacklo_pd(W1, W1), W1h = _mm256_unpackhi_pd(W1, W1);
+    const __m256d W2 = BC4(w2), W2l = _mm256_unpacklo_pd(W2, W2), W2h = _mm256_unpackhi_pd(W2, W2);
+    cpx* e = s + q;
+    cpx* p = s;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x0 = _mm256_loadu_pd((const double*)p);
+        __m256d x1 = _mm256_loadu_pd((const double*)(p + q));
+        __m256d x2 = _mm256_loadu_pd((const double*)(p + bs));
+        __m256d x3 = _mm256_loadu_pd((const double*)(p + bs + q));
+        __m256d a0 = _mm256_add_pd(x0, x1), a1 = cmulconj4(_mm256_sub_pd(x0, x1), W1l, W1h);
+        __m256d a2 = _mm256_add_pd(x2, x3), a3 = cmulconj4(_mm256_sub_pd(x2, x3), W2l, W2h);
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(a0, a2));
+        _mm256_storeu_pd((double*)(p + bs), cmulconj4(_mm256_sub_pd(a0, a2), W0l, W0h));
+        _mm256_storeu_pd((double*)(p + q), _mm256_add_pd(a1, a3));
+        _mm256_storeu_pd((double*)(p + bs + q), cmulconj4(_mm256_sub_pd(a1, a3), W0l, W0h));
+    }
+    if (p != e) {
+        cpx x0 = p[0], x1 = p[q], x2 = p[bs], x3 = p[bs + q];
+        cpx a0 = _mm_add_pd(x0, x1), a1 = cmulconj(_mm_sub_pd(x0, x1), w1);
+        cpx a2 = _mm_add_pd(x2, x3), a3 = cmulconj(_mm_sub_pd(x2, x3), w2);
+        p[0] = _mm_add_pd(a0, a2); p[bs] = cmulconj(_mm_sub_pd(a0, a2), w0);
+        p[q] = _mm_add_pd(a1, a3); p[bs + q] = cmulconj(_mm_sub_pd(a1, a3), w0);
+    }
+}
+static inline void bf2InvOne(cpx* s, u32 q, cpx w2) {  // w0 == w1 == 1
+    const u32 bs = q << 1;
+    const __m256d W2 = BC4(w2), W2l = _mm256_unpacklo_pd(W2, W2), W2h = _mm256_unpackhi_pd(W2, W2);
+    cpx* e = s + q;
+    cpx* p = s;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x0 = _mm256_loadu_pd((const double*)p);
+        __m256d x1 = _mm256_loadu_pd((const double*)(p + q));
+        __m256d x2 = _mm256_loadu_pd((const double*)(p + bs));
+        __m256d x3 = _mm256_loadu_pd((const double*)(p + bs + q));
+        __m256d a0 = _mm256_add_pd(x0, x1), a1 = _mm256_sub_pd(x0, x1);
+        __m256d a2 = _mm256_add_pd(x2, x3), a3 = cmulconj4(_mm256_sub_pd(x2, x3), W2l, W2h);
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(a0, a2));
+        _mm256_storeu_pd((double*)(p + bs), _mm256_sub_pd(a0, a2));
+        _mm256_storeu_pd((double*)(p + q), _mm256_add_pd(a1, a3));
+        _mm256_storeu_pd((double*)(p + bs + q), _mm256_sub_pd(a1, a3));
+    }
+    if (p != e) {
+        cpx x0 = p[0], x1 = p[q], x2 = p[bs], x3 = p[bs + q];
+        cpx a0 = _mm_add_pd(x0, x1), a1 = _mm_sub_pd(x0, x1);
+        cpx a2 = _mm_add_pd(x2, x3), a3 = cmulconj(_mm_sub_pd(x2, x3), w2);
+        p[0] = _mm_add_pd(a0, a2); p[bs] = _mm_sub_pd(a0, a2);
+        p[q] = _mm_add_pd(a1, a3); p[bs + q] = _mm_sub_pd(a1, a3);
+    }
+}
+
+static void difFlat(cpx* d, u32 n, u32 bb) {
+    u32 bc = 1, bs = n >> 1, st = n;
+    for (; bs >= 2; bc <<= 2, st = bs >> 1, bs >>= 2) {
+        const u32 q = bs >> 1, base = bb * bc, base2 = base << 1;
+        u32 j = 0;
+        cpx* s = d;
+        if (base == 0) { bf2FwdOne(s, q, twg(1)); j = 1, s += st; }
+        // base/base2 天然对齐 bc/2bc; 仅当整块不跨 halfSize 边界才可外提高位分量
+        if ((bc << 1) <= twHalfSize) {
+            const cpx hiA = twhi(base), hiB = twhi(base2);
+            for (; j != bc; ++j, s += st) {
+                const cpx w1 = twlo(base2 + 2 * j, hiB);
+                bf2Fwd(s, q, twlo(base + j, hiA), w1, mulI(w1));
+            }
+        } else {
+            for (; j != bc; ++j, s += st) {
+                const cpx w1 = twg(base2 + 2 * j);
+                bf2Fwd(s, q, twg(base + j), w1, mulI(w1));
+            }
+        }
+    }
+    if (bs == 1) {  // 层数为奇数时剩最低一层
+        const u32 base = bb * bc;
+        u32 j = 0;
+        cpx* s = d;
+        if (base == 0) { bfPlain(s, 1); j = 1, s += 2; }
+        if (bc <= twHalfSize) {
+            const cpx hiA = twhi(base);
+            for (; j != bc; ++j, s += 2) bfFwd(s, 1, twlo(base + j, hiA));
+        } else {
+            for (; j != bc; ++j, s += 2) bfFwd(s, 1, twg(base + j));
+        }
+    }
+}
+static void ditFlat(cpx* d, u32 n, u32 bb) {
+    u32 q = 1, bcOut = n >> 2;
+    for (; (q << 2) <= n; q <<= 2, bcOut >>= 2) {
+        const u32 st = q << 2, base = bb * bcOut, base2 = base << 1;
+        u32 j = 0;
+        cpx* s = d;
+        if (base == 0) { bf2InvOne(s, q, twg(1)); j = 1, s += st; }
+        if ((bcOut << 1) <= twHalfSize) {
+            const cpx hiA = twhi(base), hiB = twhi(base2);
+            for (; j != bcOut; ++j, s += st) {
+                const cpx w1 = twlo(base2 + 2 * j, hiB);
+                bf2Inv(s, q, twlo(base + j, hiA), w1, mulI(w1));
+            }
+        } else {
+            for (; j != bcOut; ++j, s += st) {
+                const cpx w1 = twg(base2 + 2 * j);
+                bf2Inv(s, q, twg(base + j), w1, mulI(w1));
+            }
+        }
+    }
+    if ((q << 1) <= n) {  // 层数为奇数时剩最高一层 (bc == 1)
+        const u32 base = bb;
+        if (base == 0) bfPlain(d, q);
+        else bfInv(d, q, twg(base));
+    }
+}
+static void difRec(cpx* d, u32 n, u32 bb) {
+    if (n <= (1u << FFT_LEAF_LOG)) { difFlat(d, n, bb); return; }
+    const u32 q = n >> 2, b4 = bb << 2;
+    if (bb == 0) bf2FwdOne(d, q, twg(1));
+    else { const cpx w1 = twg(bb << 1); bf2Fwd(d, q, twg(bb), w1, mulI(w1)); }
+    difRec(d, q, b4);
+    difRec(d + q, q, b4 | 1);
+    difRec(d + 2 * q, q, b4 | 2);
+    difRec(d + 3 * q, q, b4 | 3);
+}
+// ---- shang ban (index >= n/2) quan ling shi de ding ceng radix-4 (bb == 0, w0=w1=1) ----
+// t2 = t3 = 0  =>  a0 = a2 = x0, a1 = a3 = x1
+//   p[0]=x0+x1  p[q]=x0-x1  p[2q]=x0+x1*w2  p[3q]=x0-x1*w2
+// zhi du 2 ge quarter (sheng yi ban du liu liang), qie split wu xu qing ling shang ban.
+static void difZeroHiTop(cpx* d, u32 n) {
+    const u32 q = n >> 2, bs = q << 1;
+    const cpx w2 = twg(1);
+    const __m256d W2 = BC4(w2), W2s = _mm256_permute_pd(W2, 0x5);
+    cpx* e = d + q;
+    cpx* p = d;
+    for (; p + 2 <= e; p += 2) {
+        __m256d x0 = _mm256_loadu_pd((const double*)p);
+        __m256d x1 = _mm256_loadu_pd((const double*)(p + q));
+        __m256d u3 = cmul4(x1, W2, W2s);
+        _mm256_storeu_pd((double*)p, _mm256_add_pd(x0, x1));
+        _mm256_storeu_pd((double*)(p + q), _mm256_sub_pd(x0, x1));
+        _mm256_storeu_pd((double*)(p + bs), _mm256_add_pd(x0, u3));
+        _mm256_storeu_pd((double*)(p + bs + q), _mm256_sub_pd(x0, u3));
+    }
+    if (p != e) {
+        cpx x0 = p[0], x1 = p[q];
+        cpx u3 = cmul(x1, w2);
+        p[0] = _mm_add_pd(x0, x1); p[q] = _mm_sub_pd(x0, x1);
+        p[bs] = _mm_add_pd(x0, u3); p[bs + q] = _mm_sub_pd(x0, u3);
+    }
+}
+static void difRecZeroHi(cpx* d, u32 n) {
+    const u32 q = n >> 2;
+    difZeroHiTop(d, n);
+    difRec(d, q, 0);
+    difRec(d + q, q, 1);
+    difRec(d + 2 * q, q, 2);
+    difRec(d + 3 * q, q, 3);
+}
+static void ditRec(cpx* d, u32 n, u32 bb) {
+    if (n <= (1u << FFT_LEAF_LOG)) { ditFlat(d, n, bb); return; }
+    const u32 q = n >> 2, b4 = bb << 2;
+    ditRec(d, q, b4);
+    ditRec(d + q, q, b4 | 1);
+    ditRec(d + 2 * q, q, b4 | 2);
+    ditRec(d + 3 * q, q, b4 | 3);
+    if (bb == 0) bf2InvOne(d, q, twg(1));
+    else { const cpx w1 = twg(bb << 1); bf2Inv(d, q, twg(bb), w1, mulI(w1)); }
+}
+
+static void pointwise(cpx* F, cpx* G, u32 n) {
+    const double nf = 1.0 / n, sf = nf * 0.25;
+    F[0] = cscale(cmulspec(F[0], G[0]), nf);
+    F[1] = cscale(cmul(F[1], G[1]), nf);
+    const cpx cjm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), 0));
+    const cpx ngm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), (int64_t)(1ull << 63)));
+    // AVX2: 一次两组 (f, f+1) / (b, b-1)。低 lane 用 +tw, 高 lane 用 -tw。
+    const __m256d CJ = _mm256_set_m128d(cjm, cjm);
+    const __m256d NG = _mm256_set_m128d(ngm, _mm_setzero_pd());
+    const __m256d SF = _mm256_set1_pd(sf);
+    for (u32 bs = 2, be = 3; bs != n; bs <<= 1, be <<= 1) {
+        u32 f = bs, b = f + bs - 1;
+        for (; f + 2 <= be; f += 2, b -= 2) {
+            __m256d Ff = _mm256_loadu_pd((const double*)(F + f));
+            __m256d Gf = _mm256_loadu_pd((const double*)(G + f));
+            __m256d Fb = _mm256_loadu_pd((const double*)(F + b - 1));  // [F[b-1], F[b]]
+            __m256d Gb = _mm256_loadu_pd((const double*)(G + b - 1));
+            Fb = _mm256_permute2f128_pd(Fb, Fb, 0x01);                 // [F[b], F[b-1]]
+            Gb = _mm256_permute2f128_pd(Gb, Gb, 0x01);
+            __m256d Fc = _mm256_xor_pd(Fb, CJ), Gc = _mm256_xor_pd(Gb, CJ);
+            __m256d fe = _mm256_add_pd(Ff, Fc), fo = _mm256_sub_pd(Ff, Fc);
+            __m256d ge = _mm256_add_pd(Gf, Gc), go = _mm256_sub_pd(Gf, Gc);
+            const cpx t0 = twg(f >> 1);
+            __m256d T = _mm256_xor_pd(_mm256_set_m128d(t0, t0), NG);
+            __m256d pa = _mm256_sub_pd(cmulv(fe, ge), cmulv(cmulv(fo, go), T));
+            __m256d pb = _mm256_add_pd(cmulv(ge, fo), cmulv(fe, go));
+            __m256d rf = _mm256_mul_pd(_mm256_add_pd(pa, pb), SF);
+            __m256d rb = _mm256_xor_pd(_mm256_mul_pd(_mm256_sub_pd(pa, pb), SF), CJ);
+            _mm256_storeu_pd((double*)(F + f), rf);
+            _mm256_storeu_pd((double*)(F + b - 1), _mm256_permute2f128_pd(rb, rb, 0x01));
+        }
+        for (; f != be; ++f, --b) {
+            cpx Fc = _mm_xor_pd(F[b], cjm), Gc = _mm_xor_pd(G[b], cjm);
+            cpx fe = _mm_add_pd(F[f], Fc), fo = _mm_sub_pd(F[f], Fc);
+            cpx ge = _mm_add_pd(G[f], Gc), go = _mm_sub_pd(G[f], Gc);
+            cpx t = (f & 1) ? _mm_xor_pd(twg(f >> 1), ngm) : twg(f >> 1);
+            cpx pa = _mm_sub_pd(cmul(fe, ge), cmul(cmul(fo, go), t));
+            cpx pb = _mm_add_pd(cmul(ge, fo), cmul(fe, go));
+            F[f] = cscale(_mm_add_pd(pa, pb), sf);
+            F[b] = _mm_xor_pd(cscale(_mm_sub_pd(pa, pb), sf), cjm);
+        }
+    }
+}
+static void pointwiseSq(cpx* F, u32 n) {
+    const double nf = 1.0 / n, sf = nf * 0.25;
+    F[0] = cscale(cmulspec(F[0], F[0]), nf);
+    F[1] = cscale(cmul(F[1], F[1]), nf);
+    const cpx cjm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), 0));
+    const cpx ngm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), (int64_t)(1ull << 63)));
+    for (u32 bs = 2, be = 3; bs != n; bs <<= 1, be <<= 1) {
+        for (u32 f = bs, b = f + bs - 1; f != be; ++f, --b) {
+            cpx Fc = _mm_xor_pd(F[b], cjm);
+            cpx fe = _mm_add_pd(F[f], Fc), fo = _mm_sub_pd(F[f], Fc);
+            cpx t = (f & 1) ? _mm_xor_pd(twg(f >> 1), ngm) : twg(f >> 1);
+            cpx pa = _mm_sub_pd(cmul(fe, fe), cmul(cmul(fo, fo), t));
+            cpx eo = cmul(fe, fo);
+            cpx pb = _mm_add_pd(eo, eo);
+            F[f] = cscale(_mm_add_pd(pa, pb), sf);
+            F[b] = _mm_xor_pd(cscale(_mm_sub_pd(pa, pb), sf), cjm);
+        }
+    }
+}
+    // ============ 混合 radix 顶层蝶形 (移植自 best/div_verifield 前人的实数FFT; 本路径走全复数) ============
+    // 数学完全照搬前人 dif3Stage/idit3Stage/dif5Stage/idit5Stage; 旋转因子 base = -2pi/(3m) 或 -2pi/(5m),
+    // 即标准复数 DFT 的 W_{3m}^c / W_{5m}^{jc} (前人 FFTTable3/5 的 FACTOR=1,2 / 1..4), 非实数半长约定.
+    // 精度: fft_ceil_tiers 选的 lm' 恒 <= 原 2 幂 lm, 故 2^(2k)*lm <= 2^48 预算天然不破.
+    static const double SQRT3_DIV2 = 0.866025403784438646763723170752936;
+    static const double R5_C1 = 0.309016994374947424102293417183;  // cos(2pi/5)
+    static const double R5_S1 = 0.951056516295153572116439333379;  // sin(2pi/5)
+    static const double R5_C2 = -0.809016994374947424102293417183; // cos(4pi/5)
+    static const double R5_S2 = 0.587785252292473129078558064009;  // sin(4pi/5)
+    static inline cpx mkc(double re, double im) { return _mm_set_pd(im, re); }
+    static inline double cre(cpx z) { return _mm_cvtsd_f64(z); }
+    static inline double cim(cpx z) { return _mm_cvtsd_f64(_mm_unpackhi_pd(z, z)); }
+
+    // v17: 顶层蝶形旋转因子改两级 O(sqrt(m)) 小表 (同 v13 的 twbase/twg 思路)。
+    // v16 旧实现是 O(m) 次 sin/cos 建 m 项平表: perf 实测 __sincos_fma 独占 18.67% 周期,
+    // 且 2~4 张 m*16B 大表的写+读把 D refs 抬高 ~20% (cachegrind 实证)。
+    // 新: W_{Rm}^c = lo[c & mask] * hi[c >> hl],  |lo| = |hi| ~ sqrt(m) (<= 16 KiB, 常驻 L1)。
+    // sin/cos 次数 m -> 2*sqrt(m) (m=262144 时 524288 -> 1024, 512x); 循环内换成 1~4 次复乘
+    // (FP 端口有富余), 大表内存流量彻底消失。
+    // 精度: 每项独立由 libm 算出(<1 ulp), 两级相乘 +1 ulp, W^{2c}/W^{4c} 由平方链得到 (<=4 ulp),
+    //       远低于 2^(2k)*lm <= 2^48 的预算余量。
+    struct MR_Tw {
+        std::vector<cpx> lo3, hi3;  size_t cached3 = 0;  u32 hl3 = 0, hmask3 = 0;
+        std::vector<cpx> lo5, hi5;  size_t cached5 = 0;  u32 hl5 = 0, hmask5 = 0;
+        // 建两级表: m 必为 2 的幂 (混合档 m = p/8 或 p/16), 护栏保证 m >= 64
+        static void build(size_t m, double rad, std::vector<cpx>& lo, std::vector<cpx>& hi,
+                          u32& hl, u32& hmask) {
+            const u32 bits = (u32)(63 - __builtin_clzll((unsigned long long)m));
+            const u32 h = bits >> 1, H = 1u << h, NH = (u32)(m >> h);
+            lo.resize(H); hi.resize(NH);
+            for (u32 i = 0; i < H; ++i) { double a = rad * (double)i; lo[i] = mkc(std::cos(a), std::sin(a)); }
+            for (u32 i = 0; i < NH; ++i) { double a = rad * (double)((size_t)i << h); hi[i] = mkc(std::cos(a), std::sin(a)); }
+            hl = h; hmask = H - 1;
+        }
+        void ensure3(size_t m) {
+            if (cached3 == m && !lo3.empty()) return;
+            build(m, -3.14159265358979323846 * 2.0 / (3.0 * (double)m), lo3, hi3, hl3, hmask3);
+            cached3 = m;
+        }
+        void ensure5(size_t m) {
+            if (cached5 == m && !lo5.empty()) return;
+            build(m, -3.14159265358979323846 * 2.0 / (5.0 * (double)m), lo5, hi5, hl5, hmask5);
+            cached5 = m;
+        }
+    };
+    static MR_Tw g_mr_tw;
+
+    // radix-3 DIF 顶层: 总复数 ts=3m, 块 i 在 (cpx*)b0 + i*m. 数学照搬前人 dif3Stage.
+    static void dif3StageR(cpx* b0, u32 m) {
+        g_mr_tw.ensure3(m);
+        const cpx* LO = g_mr_tw.lo3.data(); const cpx* HI = g_mr_tw.hi3.data();
+        const u32 hl = g_mr_tw.hl3, H = g_mr_tw.hmask3 + 1;
+        cpx* B1 = b0 + (size_t)m; cpx* B2 = b0 + 2*(size_t)m;
+        const __m256d VH = _mm256_set1_pd(0.5), VS = _mm256_set1_pd(SQRT3_DIV2);
+        for (u32 blk = 0; blk < m; blk += H) {             // 外层: 高位分量提到循环外 (1 复数)
+            const cpx wh = HI[blk >> hl];
+            const __m256d wh4 = _mm256_set_m128d(wh, wh);
+            for (u32 l = 0; l < H; l += 2) {               // 一次 2 个复数 (AVX2)
+                const u32 c = blk + l;
+                __m256d a0 = _mm256_loadu_pd((const double*)(b0 + c));
+                __m256d a1 = _mm256_loadu_pd((const double*)(B1 + c));
+                __m256d a2 = _mm256_loadu_pd((const double*)(B2 + c));
+                __m256d s = _mm256_add_pd(a1, a2), d = _mm256_sub_pd(a1, a2);
+                __m256d h = _mm256_fnmadd_pd(s, VH, a0);   // a0 - 0.5*s
+                __m256d g = _mm256_mul_pd(mulI4(d), VS);
+                __m256d w1 = cmulv(_mm256_loadu_pd((const double*)(LO + l)), wh4);  // W_{3m}^c
+                __m256d w2 = cmulv(w1, w1);                                          // W_{3m}^{2c}
+                _mm256_storeu_pd((double*)(b0 + c), _mm256_add_pd(a0, s));
+                _mm256_storeu_pd((double*)(B1 + c), cmulv(_mm256_sub_pd(h, g), w1));
+                _mm256_storeu_pd((double*)(B2 + c), cmulv(_mm256_add_pd(h, g), w2));
+            }
+        }
+    }
+    static void idit3StageR(cpx* b0, u32 m) {
+        g_mr_tw.ensure3(m);
+        const cpx* LO = g_mr_tw.lo3.data(); const cpx* HI = g_mr_tw.hi3.data();
+        const u32 hl = g_mr_tw.hl3, H = g_mr_tw.hmask3 + 1;
+        cpx* B1 = b0 + (size_t)m; cpx* B2 = b0 + 2*(size_t)m;
+        const __m256d VH = _mm256_set1_pd(0.5), VS = _mm256_set1_pd(SQRT3_DIV2);
+        for (u32 blk = 0; blk < m; blk += H) {
+            const cpx wh = HI[blk >> hl];
+            const __m256d wh4 = _mm256_set_m128d(wh, wh);
+            for (u32 l = 0; l < H; l += 2) {
+                const u32 c = blk + l;
+                __m256d t0 = _mm256_loadu_pd((const double*)(b0 + c));
+                __m256d y1 = _mm256_loadu_pd((const double*)(B1 + c));
+                __m256d y2 = _mm256_loadu_pd((const double*)(B2 + c));
+                __m256d w1 = cmulv(_mm256_loadu_pd((const double*)(LO + l)), wh4);
+                __m256d w2 = cmulv(w1, w1);
+                __m256d x1 = cmulconjv(y1, w1), x2 = cmulconjv(y2, w2);
+                __m256d s = _mm256_add_pd(x1, x2), d = _mm256_sub_pd(x1, x2);
+                __m256d h = _mm256_fnmadd_pd(s, VH, t0);
+                __m256d g = _mm256_mul_pd(mulI4(d), VS);
+                _mm256_storeu_pd((double*)(b0 + c), _mm256_add_pd(t0, s));
+                _mm256_storeu_pd((double*)(B1 + c), _mm256_add_pd(h, g));
+                _mm256_storeu_pd((double*)(B2 + c), _mm256_sub_pd(h, g));
+            }
+        }
+    }
+    // radix-5 DIF 顶层: 总复数 ts=5m, 块 i 在 (cpx*)b0 + i*m. 数学照搬前人 dif5Stage.
+    static void dif5StageR(cpx* b0, u32 m) {
+        g_mr_tw.ensure5(m);
+        const cpx* LO = g_mr_tw.lo5.data(); const cpx* HI = g_mr_tw.hi5.data();
+        const u32 hl = g_mr_tw.hl5, H = g_mr_tw.hmask5 + 1;
+        // i*v == mulI(v)  =>  u -/+ i*v 直接用向量加减, 不再逐分量 cre/cim 拆装.
+        cpx* B1=b0+(size_t)m; cpx* B2=b0+2*(size_t)m; cpx* B3=b0+3*(size_t)m; cpx* B4=b0+4*(size_t)m;
+        const __m256d C1=_mm256_set1_pd(R5_C1), S1=_mm256_set1_pd(R5_S1);
+        const __m256d C2=_mm256_set1_pd(R5_C2), S2=_mm256_set1_pd(R5_S2);
+        for (u32 blk = 0; blk < m; blk += H) {
+            const cpx wh = HI[blk >> hl];
+            const __m256d wh4 = _mm256_set_m128d(wh, wh);
+            for (u32 l = 0; l < H; l += 2) {
+                const u32 c = blk + l;
+                __m256d a0=_mm256_loadu_pd((const double*)(b0+c)), a1=_mm256_loadu_pd((const double*)(B1+c));
+                __m256d a2=_mm256_loadu_pd((const double*)(B2+c)), a3=_mm256_loadu_pd((const double*)(B3+c));
+                __m256d a4=_mm256_loadu_pd((const double*)(B4+c));
+                __m256d t1=_mm256_add_pd(a1,a4), t2=_mm256_add_pd(a2,a3);
+                __m256d t3=_mm256_sub_pd(a1,a4), t4=_mm256_sub_pd(a2,a3);
+                __m256d u1=_mm256_fmadd_pd(t2,C2,_mm256_fmadd_pd(t1,C1,a0));
+                __m256d u2=_mm256_fmadd_pd(t2,C1,_mm256_fmadd_pd(t1,C2,a0));
+                __m256d v1=mulI4(_mm256_fmadd_pd(t4,S2,_mm256_mul_pd(t3,S1)));
+                __m256d v2=mulI4(_mm256_fnmadd_pd(t4,S1,_mm256_mul_pd(t3,S2)));
+                __m256d w1=cmulv(_mm256_loadu_pd((const double*)(LO+l)), wh4);  // W_{5m}^c
+                __m256d w2=cmulv(w1,w1), w3=cmulv(w2,w1), w4=cmulv(w2,w2);
+                _mm256_storeu_pd((double*)(b0+c), _mm256_add_pd(a0,_mm256_add_pd(t1,t2)));
+                _mm256_storeu_pd((double*)(B1+c), cmulv(_mm256_sub_pd(u1,v1), w1));
+                _mm256_storeu_pd((double*)(B2+c), cmulv(_mm256_sub_pd(u2,v2), w2));
+                _mm256_storeu_pd((double*)(B3+c), cmulv(_mm256_add_pd(u2,v2), w3));
+                _mm256_storeu_pd((double*)(B4+c), cmulv(_mm256_add_pd(u1,v1), w4));
+            }
+        }
+    }
+    static void idit5StageR(cpx* b0, u32 m) {
+        g_mr_tw.ensure5(m);
+        const cpx* LO = g_mr_tw.lo5.data(); const cpx* HI = g_mr_tw.hi5.data();
+        const u32 hl = g_mr_tw.hl5, H = g_mr_tw.hmask5 + 1;
+        cpx* B1=b0+(size_t)m; cpx* B2=b0+2*(size_t)m; cpx* B3=b0+3*(size_t)m; cpx* B4=b0+4*(size_t)m;
+        const __m256d C1=_mm256_set1_pd(R5_C1), S1=_mm256_set1_pd(R5_S1);
+        const __m256d C2=_mm256_set1_pd(R5_C2), S2=_mm256_set1_pd(R5_S2);
+        for (u32 blk = 0; blk < m; blk += H) {
+            const cpx wh = HI[blk >> hl];
+            const __m256d wh4 = _mm256_set_m128d(wh, wh);
+            for (u32 l = 0; l < H; l += 2) {
+                const u32 c = blk + l;
+                __m256d w1=cmulv(_mm256_loadu_pd((const double*)(LO+l)), wh4);
+                __m256d w2=cmulv(w1,w1), w3=cmulv(w2,w1), w4=cmulv(w2,w2);
+                __m256d y0=_mm256_loadu_pd((const double*)(b0+c));
+                __m256d x1=cmulconjv(_mm256_loadu_pd((const double*)(B1+c)), w1);
+                __m256d x2=cmulconjv(_mm256_loadu_pd((const double*)(B2+c)), w2);
+                __m256d x3=cmulconjv(_mm256_loadu_pd((const double*)(B3+c)), w3);
+                __m256d x4=cmulconjv(_mm256_loadu_pd((const double*)(B4+c)), w4);
+                __m256d t1=_mm256_add_pd(x1,x4), t2=_mm256_add_pd(x2,x3);
+                __m256d t3=_mm256_sub_pd(x1,x4), t4=_mm256_sub_pd(x2,x3);
+                __m256d u1=_mm256_fmadd_pd(t2,C2,_mm256_fmadd_pd(t1,C1,y0));
+                __m256d u2=_mm256_fmadd_pd(t2,C1,_mm256_fmadd_pd(t1,C2,y0));
+                __m256d v1=mulI4(_mm256_fmadd_pd(t4,S2,_mm256_mul_pd(t3,S1)));
+                __m256d v2=mulI4(_mm256_fnmadd_pd(t4,S1,_mm256_mul_pd(t3,S2)));
+                _mm256_storeu_pd((double*)(b0+c), _mm256_add_pd(y0,_mm256_add_pd(t1,t2)));
+                _mm256_storeu_pd((double*)(B1+c), _mm256_add_pd(u1,v1));
+                _mm256_storeu_pd((double*)(B2+c), _mm256_add_pd(u2,v2));
+                _mm256_storeu_pd((double*)(B3+c), _mm256_sub_pd(u2,v2));
+                _mm256_storeu_pd((double*)(B4+c), _mm256_sub_pd(u1,v1));
+            }
+        }
+    }
+    // ---- 混合 radix 的实数频域点乘 (照搬前人 real_dot_binrev3/5 的块结构) ----
+    // 布局: 总复数 ts = R*m, 块 j 的位置 p 承载频点 phi = R*P(p) + j, 其中
+    //   P(p) = (m - brev_m(p)) mod m   <-- difRec 是共轭方向 DFT, 输出排列不是裸 brev.
+    //   (实测反解: m=16 时 P = 0,8,12,4,14,6,10,2,15,7,11,3,13,5,9,1, 与该式逐项吻合)
+    // 共轭伙伴 ts-phi = R*(m-1-P(p)) + (R-j):
+    //   j=0 时伙伴仍在块 0, 且 P(f)+P(b)=m <=> b=f+bs-1, 正是 v13 pointwise 的配对形状 -> 直接复用;
+    //   j>=1 时伙伴在块 R-j, 位置 q(p) 满足 P(q)=m-1-P(p) <=> q(p) = brev_m((1-brev_m(p)) mod m).
+    // 旋转因子 (与 v13 同一约定; 实测 twg(i) = exp(+2pi i * brev_n(2i)/n)):
+    //   t(phi) = exp(-2pi i * phi/ts) = tblk(p) * rho_j,  tblk(p) = (p&1)? -twg(p>>1) : twg(p>>1),
+    //   rho_j = exp(-2pi i * j/(R*m)).
+    // 归一化: 混合路径 nf = 1/ts (不是 1/m), 故由外部传入.
+
+    // 跨块共轭配对表 q(p) (按 m 缓存; O(m) 构建, 远轻于一次 FFT)
+    struct MR_Q {
+        std::vector<u32> q;
+        u32 cached = 0;
+        std::vector<u32> rv;
+        const u32* get(u32 m) {
+            if (cached == m && !q.empty()) return q.data();
+            const u32 bits = (u32)(31 - __builtin_clz(m));
+            // v17: 位反转表改 O(1) 递推。原实现每项内层跑 bits 次 -> m*bits 次迭代
+            // (m=262144 时 4.7M 次, perf 实测 MR_Q::get 独占 10.67% 周期)。
+            // rv[p] = (rv[p>>1] >> 1) | ((p&1) << (bits-1)), p>>1 < p 保证已就绪。
+            rv.resize(m); q.resize(m);
+            rv[0] = 0;
+            for (u32 p = 1; p < m; ++p) rv[p] = (rv[p >> 1] >> 1) | ((p & 1u) << (bits - 1));
+            for (u32 p = 0; p < m; ++p) q[p] = rv[(1u + m - rv[p]) & (m - 1)];
+            cached = m;
+            return q.data();
+        }
+    };
+    static MR_Q g_mr_q;
+
+    // 块内自配对 (= v13 pointwise 的形状, 只是 nf 外部给定)
+    static void pointwise_blk(cpx* F, cpx* G, u32 n, double nf) {
+        const double sf = nf * 0.25;
+        F[0] = cscale(cmulspec(F[0], G[0]), nf);   // 频点 0 与 Nyquist 打包在一处
+        F[1] = cscale(cmul(F[1], G[1]), nf);       // 频点 ts/2 自共轭
+        const cpx cjm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), 0));
+        const cpx ngm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), (int64_t)(1ull << 63)));
+        for (u32 bs = 2, be = 3; bs != n; bs <<= 1, be <<= 1) {
+            for (u32 f = bs, b = f + bs - 1; f != be; ++f, --b) {
+                cpx Fc = _mm_xor_pd(F[b], cjm), Gc = _mm_xor_pd(G[b], cjm);
+                cpx fe = _mm_add_pd(F[f], Fc), fo = _mm_sub_pd(F[f], Fc);
+                cpx ge = _mm_add_pd(G[f], Gc), go = _mm_sub_pd(G[f], Gc);
+                cpx t = (f & 1) ? _mm_xor_pd(twg(f >> 1), ngm) : twg(f >> 1);
+                cpx pa = _mm_sub_pd(cmul(fe, ge), cmul(cmul(fo, go), t));
+                cpx pb = _mm_add_pd(cmul(ge, fo), cmul(fe, go));
+                F[f] = cscale(_mm_add_pd(pa, pb), sf);
+                F[b] = _mm_xor_pd(cscale(_mm_sub_pd(pa, pb), sf), cjm);
+            }
+        }
+    }
+    // 跨块配对: A[p] (块 j) <-> B[q(p)] (块 R-j); t = 块0 序列 * rho.
+    // q 是 [0,m) 上的双射, p 遍历 [0,m) 恰好把两块各 m 个元素各处理一次.
+    static void pointwise_cross(cpx* FA, cpx* FB2, cpx* GA, cpx* GB2, u32 m, cpx rho, double nf) {
+        const double sf = nf * 0.25;
+        const u32* qt = g_mr_q.get(m);
+        const cpx cjm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), 0));
+        const cpx ngm = _mm_castsi128_pd(_mm_set_epi64x((int64_t)(1ull << 63), (int64_t)(1ull << 63)));
+        for (u32 p = 0; p < m; ++p) {
+            const u32 q = qt[p];
+            cpx Fc = _mm_xor_pd(FB2[q], cjm), Gc = _mm_xor_pd(GB2[q], cjm);
+            cpx fe = _mm_add_pd(FA[p], Fc), fo = _mm_sub_pd(FA[p], Fc);
+            cpx ge = _mm_add_pd(GA[p], Gc), go = _mm_sub_pd(GA[p], Gc);
+            cpx t0 = twg(p >> 1);
+            cpx t = cmul((p & 1) ? _mm_xor_pd(t0, ngm) : t0, rho);
+            cpx pa = _mm_sub_pd(cmul(fe, ge), cmul(cmul(fo, go), t));
+            cpx pb = _mm_add_pd(cmul(ge, fo), cmul(fe, go));
+            FA[p]  = cscale(_mm_add_pd(pa, pb), sf);
+            FB2[q] = _mm_xor_pd(cscale(_mm_sub_pd(pa, pb), sf), cjm);
+        }
+    }
+    // R = 3 或 5 的整段点乘 (F,G 可同指针 -> 平方)
+    static void pointwise_mixed(cpx* F, cpx* G, u32 m, u32 R) {
+        const double nf = 1.0 / (double)((size_t)R * m);
+        pointwise_blk(F, G, m, nf);
+        const double base = -3.14159265358979323846 * 2.0 / ((double)R * (double)m);  // -2pi/(R*m)
+        for (u32 j = 1; j * 2 < R; ++j) {                    // R=3: j=1; R=5: j=1,2
+            const double ang = base * (double)j;
+            const cpx rho = mkc(std::cos(ang), std::sin(ang));
+            pointwise_cross(F + (size_t)j * m, F + (size_t)(R - j) * m,
+                            G + (size_t)j * m, G + (size_t)(R - j) * m, m, rho, nf);
+        }
+    }
+}  // namespace fft
+
+// ============================ bit split / merge ============================
+// AVX2 gather 位提取: 一条 vpgatherdd 抓 8 个跨界 32-bit 窗口, 变量移位 + 掩码 + 转 double。
+// 要求 k <= 25 (窗口 k+7 位必须落在 32 位内), 实际 k <= 19。
+static size_t split_b2(const u64* src, double* g, size_t n, int k, size_t zlim) {
+    const size_t total = ((n << 6) + (size_t)k - 1) / (size_t)k;
+    const unsigned char* base = (const unsigned char*)src;
+    const u32 m = (1u << k) - 1;
+    size_t j = 0;
+    // 向量段: 保证 gather 读取的 4 字节完全落在 [0, 8n)
+    size_t vend = ((n << 6) >= 32) ? ((n << 6) - 32) / (size_t)k : 0;
+    if (vend > total) vend = total;
+    vend &= ~(size_t)7;
+    if (vend) {
+        const __m256i off0 = _mm256_setr_epi32(0, k, 2 * k, 3 * k, 4 * k, 5 * k, 6 * k, 7 * k);
+        const __m256i step = _mm256_set1_epi32(8 * k);
+        const __m256i mv = _mm256_set1_epi32((int)m);
+        const __m256i m7 = _mm256_set1_epi32(7);
+        __m256i bit = off0;
+        for (; j < vend; j += 8) {
+            __m256i bo = _mm256_srli_epi32(bit, 3);
+            __m256i sh = _mm256_and_si256(bit, m7);
+            __m256i w = _mm256_i32gather_epi32((const int*)base, bo, 1);
+            w = _mm256_and_si256(_mm256_srlv_epi32(w, sh), mv);
+            _mm256_storeu_pd(g + j, _mm256_cvtepi32_pd(_mm256_castsi256_si128(w)));
+            _mm256_storeu_pd(g + j + 4, _mm256_cvtepi32_pd(_mm256_extracti128_si256(w, 1)));
+            bit = _mm256_add_epi32(bit, step);
+        }
+    }
+    for (; j < total; ++j) {  // 安全标量尾 (末尾高位补 0)
+        const size_t b = j * (size_t)k;
+        const size_t li = b >> 6;
+        const int sh = (int)(b & 63);
+        u64 v = (li < n) ? (src[li] >> sh) : 0;
+        if (sh && li + 1 < n) v |= src[li + 1] << (64 - sh);
+        g[j] = (double)(u32)(v & m);
+    }
+    // 只清尾部: 前 total 项已被写满, 全量 memset 是冗余双写
+    if (zlim > total) std::memset(g + total, 0, (zlim - total) * 8);
+    return total;
+}
+static void merge_b2(u64* f, const double* g, size_t n, int k) {
+    size_t i = 0, j = 0;
+    int w = 0;
+    u128 tmp = 0;
+    while (i < n) {
+        while (w < 64) { tmp += (u128)(u64)(int64_t)(g[j++] + 0.5) << w; w += k; }
+        f[i++] = (u64)tmp;
+        tmp >>= 64, w -= 64;
+    }
+}
+// FFT 实系数槽位数: 严格 ceil + 严格 next_pow2。
+// 旧实现 (u*64/k + 1) 与 (2u << (31-clz(c))) 在 c 恰为 2 的幂时会白白多要一倍长度。
+// 返回 >= c 的最小可用 FFT 长度(doubles): 2^k / 3*2^(k-2) / 5*2^(k-3).
+// 混合档位恒 <= next_pow2(c), 故 2^(2k)*lm <= 2^48 精度预算天然不破.
+static inline u32 fft_ceil_tiers(u32 c) {
+    u32 p = (c & (c - 1)) ? (2u << (31 - __builtin_clz(c))) : c;  // next_pow2(c)
+    u32 best = p;
+#ifdef V16_NOMIX
+    return best;   // 归因对照: 关掉混合档, 只留 2 幂 (代码仍在, 隔离 "代码膨胀/布局" 与 "混合路径本身")
+#endif
+    // 护栏: 块内复数数 m 必须 >= 16 (pointwise_blk 的 F[0]/F[1] 特例 + 层循环需要),
+    //       radix-3 时 m = p/8, radix-5 时 m = p/16 -> p >= 1024 一并覆盖 (m >= 64).
+    if (c != p && p >= 1024) {
+        u32 h = (p >> 2) * 3;          // 3*2^(k-2)
+        if (h >= c && h < best) best = h;
+        u32 h5 = (p >> 3) * 5;         // 5*2^(k-3)
+        if (h5 >= c && h5 < best) best = h5;
+    }
+    return best;
+}
+static inline u32 fft_len_for(size_t u, int k) {
+    const u32 c = (u32)((u * 64 + (size_t)k - 1) / (size_t)k);
+    return fft_ceil_tiers(c);
+}
+static inline int pick_k(size_t u) {
+    static const size_t gk[11] = {19ull << 4,  18ull << 6,  17ull << 8, 16ull << 10,
+                                  15ull << 12, 14ull << 14, 13ull << 16, 12ull << 18,
+                                  11ull << 20, 10ull << 22, ~size_t(0)};
+    int i = 0;
+    while (u > gk[i]) ++i;
+    return 19 - i;
+}
+
+// ============================ multiply ============================
+static void mul_bf(const u64* a, int na, const u64* b, int nb, u64* c) {
+    std::memset(c, 0, (size_t)(na + nb) * 8);
+    for (int i = 0; i < nb; ++i) {
+        u64 carry = 0, bi = b[i];
+        for (int j = 0; j < na; ++j) {
+            u128 t = (u128)a[j] * bi + c[i + j] + carry;
+            c[i + j] = (u64)t;
+            carry = (u64)(t >> 64);
+        }
+        c[i + na] = carry;
+    }
+}
+static void mul_fft(const u64* a, int na, const u64* b, int nb, u64* c) {
+    const size_t u = (size_t)na + nb;
+    const int k = pick_k(u);
+    const u32 lm = fft_len_for(u, k);
+    const bool same = (a == b) && (na == nb);
+    const u32 ts = lm >> 1;                 // 总复数点数
+    // 路径判定必须在 split 之前: zero-hi 只适用于纯 2 幂路径 (混合路径顶层未做半区跳过),
+    // 若在这里错误地把 zlim 提成 lm, 就等于废掉 v13 的 zero-hi (省一半清零 + difRecZeroHi 省一半读流量).
+    const int path = (lm % 3 == 0) ? 3 : ((lm % 5 == 0) ? 5 : 2);
+    // zero-hi: 单个操作数系数数 <= lm/2 时, 实数缓冲上半整块为零,
+    // 顶层 radix-4 可只读下半 (省 1/2 读流量 + split 省 1/2 清零)。
+    const bool deep = (path == 2) && ts > (1u << FFT_LEAF_LOG);
+    const size_t half = lm >> 1;
+    const size_t ta = split_b2(a, FB, na, k, deep ? half : lm);
+    const bool hiA = deep && ta <= half;
+    // deep 且未命中 zero-hi 时 split 只清到 half(<ta) 等于没清, 需补清 [ta, lm)
+    if (deep && !hiA && ta < lm) std::memset(FB + ta, 0, (lm - ta) * 8);
+    size_t tb = ta; bool hiB = hiA;
+    if (!same) {
+        tb = split_b2(b, GB, nb, k, deep ? half : lm);
+        hiB = deep && tb <= half;
+        if (deep && !hiB && tb < lm) std::memset(GB + tb, 0, (lm - tb) * 8);
+    }
+    // ---- 混合 radix 路径 (全复数; 点乘复用现成 pointwise/pointwiseSq 的共轭对称归一化) ----
+    // 调度与 fft_ceil_tiers 严格对应: 3 整除 <=> 3*2^(k-2) (m=ts/3 为 2 幂);
+    // 5 整除 <=> 5*2^(k-3) (m=ts/5 为 2 幂); 否则纯 2 幂. 三者互斥且穷尽.
+    if (path == 3) {
+        const u32 m = ts / 3;               // 每块复数数 (2 的幂)
+        fft::resize(m);
+        fft::dif3StageR((fft::cpx*)FB, m);
+        fft::difRec((fft::cpx*)FB,                 m, 0);
+        fft::difRec((fft::cpx*)(FB + 2*(size_t)m), m, 0);
+        fft::difRec((fft::cpx*)(FB + 4*(size_t)m), m, 0);
+        if (same) {
+            fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)FB, m, 3);
+        } else {
+            fft::dif3StageR((fft::cpx*)GB, m);
+            fft::difRec((fft::cpx*)GB,                 m, 0);
+            fft::difRec((fft::cpx*)(GB + 2*(size_t)m), m, 0);
+            fft::difRec((fft::cpx*)(GB + 4*(size_t)m), m, 0);
+            fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)GB, m, 3);
+        }
+        fft::ditRec((fft::cpx*)FB,                 m, 0);
+        fft::ditRec((fft::cpx*)(FB + 2*(size_t)m), m, 0);
+        fft::ditRec((fft::cpx*)(FB + 4*(size_t)m), m, 0);
+        fft::idit3StageR((fft::cpx*)FB, m);
+    } else if (path == 5) {
+        const u32 m = ts / 5;
+        fft::resize(m);
+        fft::dif5StageR((fft::cpx*)FB, m);
+        for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(FB + 2*(size_t)m*i), m, 0);
+        if (same) {
+            fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)FB, m, 5);
+        } else {
+            fft::dif5StageR((fft::cpx*)GB, m);
+            for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(GB + 2*(size_t)m*i), m, 0);
+            fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)GB, m, 5);
+        }
+        for (int i = 0; i < 5; ++i) fft::ditRec((fft::cpx*)(FB + 2*(size_t)m*i), m, 0);
+        fft::idit5StageR((fft::cpx*)FB, m);
+    } else {
+        // ---- 纯 2 幂路径 (原 v13, 含 zero-hi 优化) ----
+        fft::resize(ts);
+        if (hiA) fft::difRecZeroHi((fft::cpx*)FB, ts); else fft::difRec((fft::cpx*)FB, ts, 0);
+        if (same) {
+            fft::pointwiseSq((fft::cpx*)FB, ts);
+        } else {
+            if (hiB) fft::difRecZeroHi((fft::cpx*)GB, ts); else fft::difRec((fft::cpx*)GB, ts, 0);
+            fft::pointwise((fft::cpx*)FB, (fft::cpx*)GB, ts);
+        }
+        fft::ditRec((fft::cpx*)FB, ts, 0);
+    }
+    merge_b2(c, FB, u, k);
+}
+
+// ============================ output ============================
+static inline char* emit(char* out, const u64* R, int n, int neg) {
+    while (n > 1 && R[n - 1] == 0) --n;
+    if (n <= 0 || (n == 1 && R[0] == 0)) { *out++ = '0'; *out++ = '\n'; return out; }
+    if (neg) *out++ = '-';
+    u64 top = R[n - 1];
+    int d = 16 - (int)(_lzcnt_u64(top) >> 2);
+    hex16_store(top << (64 - 4 * d), out);
+    out += d;
+    for (int c = n - 2; c >= 0; --c) { hex16_store(R[c], out); out += 16; }
+    *out++ = '\n';
+    return out;
+}
+
+#ifdef V16_SELFTEST
+// 隔离自测 (仅 -DV16_SELFTEST 时编译进来, 生产二进制不含):
+// 用 schoolbook mul_bf 作精确参照, 逐个长度校验 mul_fft 的三条路径。
+#include <random>
+#include <vector>
+static u64 SA[1 << 16], SB[1 << 16], SC[1 << 17], SR[1 << 17];
+static std::mt19937_64 g_rng(9876);
+
+static void fwd_mixed(double* P, int R, u32 m) {
+    if (R == 3) {
+        fft::dif3StageR((fft::cpx*)P, m);
+        for (int i = 0; i < 3; ++i) fft::difRec((fft::cpx*)(P + 2 * (size_t)m * i), m, 0);
+    } else {
+        fft::dif5StageR((fft::cpx*)P, m);
+        for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(P + 2 * (size_t)m * i), m, 0);
+    }
+}
+static void inv_mixed(double* P, int R, u32 m) {
+    if (R == 3) {
+        for (int i = 0; i < 3; ++i) fft::ditRec((fft::cpx*)(P + 2 * (size_t)m * i), m, 0);
+        fft::idit3StageR((fft::cpx*)P, m);
+    } else {
+        for (int i = 0; i < 5; ++i) fft::ditRec((fft::cpx*)(P + 2 * (size_t)m * i), m, 0);
+        fft::idit5StageR((fft::cpx*)P, m);
+    }
+}
+// (a) 往返: x --fwd--> --inv--> 应得 ts*x
+static int rt_test(int R, u32 m) {
+    const u32 ts = (u32)R * m, L = 2 * ts;
+    std::vector<double> ref(L);
+    for (auto& v : ref) v = (double)(int)(g_rng() % 1000);
+    for (u32 i = 0; i < L; ++i) FB[i] = ref[i];
+    fft::resize(m);
+    fwd_mixed(FB, R, m);
+    inv_mixed(FB, R, m);
+    double worst = 0;
+    for (u32 i = 0; i < L; ++i) worst = std::max(worst, std::fabs(FB[i] / ts - ref[i]));
+    fprintf(stderr, "  rt   R=%d m=%-6u  max_abs_err=%.3e  %s\n", R, m, worst, worst < 1e-6 ? "OK" : "**BAD**");
+    return worst < 1e-6 ? 0 : 1;
+}
+// (b) 变换 + pointwise_mixed + 逆变换 == 长度 L 的实数循环卷积?
+static int conv_test(int R, u32 m) {
+    const u32 ts = (u32)R * m, L = 2 * ts;
+    std::vector<double> a(L), b(L), ref(L, 0.0);
+    for (u32 i = 0; i < L; ++i) { a[i] = (double)(int)(g_rng() % 100); b[i] = (double)(int)(g_rng() % 100); }
+    for (u32 k = 0; k < L; ++k) { double s = 0; for (u32 j = 0; j < L; ++j) s += a[j] * b[(k + L - j) % L]; ref[k] = s; }
+    for (u32 i = 0; i < L; ++i) { FB[i] = a[i]; GB[i] = b[i]; }
+    fft::resize(m);
+    fwd_mixed(FB, R, m); fwd_mixed(GB, R, m);
+    fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)GB, m, (u32)R);
+    inv_mixed(FB, R, m);
+    double worst = 0; u32 wi = 0;
+    for (u32 i = 0; i < L; ++i) { double e = std::fabs(FB[i] - ref[i]); if (e > worst) { worst = e; wi = i; } }
+    fprintf(stderr, "  conv R=%d m=%-6u  max_abs_err=%.3e at i=%u (got %.2f want %.2f)  %s\n",
+            R, m, worst, wi, FB[wi], ref[wi], worst < 1e-3 ? "OK" : "**BAD**");
+    return worst < 1e-3 ? 0 : 1;
+}
+
+static u32 brev_u(u32 x, int bits) { u32 r = 0; for (int i = 0; i < bits; ++i) if (x >> i & 1) r |= 1u << (bits - 1 - i); return r; }
+// (c) 频点映射: 槽位 (块 j, 位置 p) 是否 == Z[R*P(p)+j], P(p)=(m-brev_m(p))%m ?
+static int map_test(int R, u32 m) {
+    const u32 ts = (u32)R * m, L = 2 * ts;
+    const int bits = 31 - __builtin_clz(m);
+    std::vector<double> g(L);
+    for (auto& v : g) v = (double)(int)(g_rng() % 100);
+    for (u32 i = 0; i < L; ++i) FB[i] = g[i];
+    fft::resize(m);
+    fwd_mixed(FB, R, m);
+    const double TP = 2.0 * 3.14159265358979323846;
+    double worst = 0; u32 wj = 0, wp = 0;
+    for (u32 j = 0; j < (u32)R; ++j) for (u32 p = 0; p < m; ++p) {
+        const u32 phi = (u32)R * ((m - brev_u(p, bits)) & (m - 1)) + j;
+        double zr = 0, zi = 0;
+        for (u32 t = 0; t < ts; ++t) {                     // 朴素 DFT_ts, z[t]=g[2t]+i g[2t+1]
+            double an = -TP * (double)t * (double)phi / (double)ts;
+            double c = std::cos(an), s = std::sin(an);
+            zr += g[2 * t] * c - g[2 * t + 1] * s;
+            zi += g[2 * t] * s + g[2 * t + 1] * c;
+        }
+        const double* slot = FB + 2 * ((size_t)j * m + p);
+        double e = std::max(std::fabs(slot[0] - zr), std::fabs(slot[1] - zi));
+        if (e > worst) { worst = e; wj = j; wp = p; }
+    }
+    fprintf(stderr, "  map  R=%d m=%-6u  max_abs_err=%.3e (worst blk=%u pos=%u)  %s\n",
+            R, m, worst, wj, wp, worst < 1e-6 ? "OK" : "**BAD**");
+    return worst < 1e-6 ? 0 : 1;
+}
+// (d) pointwise_blk 在纯 2 幂路径下是否与 v13 pointwise 等价 (即忠实拷贝)?
+static int blk_test(u32 n) {
+    const u32 L = 2 * n;
+    std::vector<double> a(L), b(L), ref(L, 0.0);
+    for (u32 i = 0; i < L; ++i) { a[i] = (double)(int)(g_rng() % 100); b[i] = (double)(int)(g_rng() % 100); }
+    for (u32 k = 0; k < L; ++k) { double s = 0; for (u32 j = 0; j < L; ++j) s += a[j] * b[(k + L - j) % L]; ref[k] = s; }
+    for (u32 i = 0; i < L; ++i) { FB[i] = a[i]; GB[i] = b[i]; }
+    fft::resize(n);
+    fft::difRec((fft::cpx*)FB, n, 0);
+    fft::difRec((fft::cpx*)GB, n, 0);
+    fft::pointwise_blk((fft::cpx*)FB, (fft::cpx*)GB, n, 1.0 / n);
+    fft::ditRec((fft::cpx*)FB, n, 0);
+    double worst = 0;
+    for (u32 i = 0; i < L; ++i) worst = std::max(worst, std::fabs(FB[i] - ref[i]));
+    fprintf(stderr, "  blk  n=%-6u          max_abs_err=%.3e  %s\n", n, worst, worst < 1e-3 ? "OK" : "**BAD**");
+    return worst < 1e-3 ? 0 : 1;
+}
+
+// (e) 直接反解真实排列: 每个槽位实际承载哪个频点 phi?
+static void discover(int R, u32 m) {
+    const u32 ts = (u32)R * m, L = 2 * ts;
+    const int bits = 31 - __builtin_clz(m);
+    std::vector<double> g(L);
+    for (auto& v : g) v = (double)(int)(g_rng() % 100);
+    for (u32 i = 0; i < L; ++i) FB[i] = g[i];
+    fft::resize(m);
+    fwd_mixed(FB, R, m);
+    const double TP = 2.0 * 3.14159265358979323846;
+    std::vector<double> Zr(ts), Zi(ts);
+    for (u32 phi = 0; phi < ts; ++phi) {
+        double zr = 0, zi = 0;
+        for (u32 t = 0; t < ts; ++t) {
+            double an = -TP * (double)t * (double)phi / (double)ts;
+            double c = std::cos(an), s = std::sin(an);
+            zr += g[2 * t] * c - g[2 * t + 1] * s;
+            zi += g[2 * t] * s + g[2 * t + 1] * c;
+        }
+        Zr[phi] = zr; Zi[phi] = zi;
+    }
+    fprintf(stderr, "  discover R=%d m=%u (ts=%u):\n", R, m, ts);
+    for (u32 j = 0; j < (u32)R; ++j) {
+        fprintf(stderr, "    blk%u: ", j);
+        for (u32 p = 0; p < m && p < 16; ++p) {
+            const double* slot = FB + 2 * ((size_t)j * m + p);
+            int bestv = -1; double bd = 1e30;
+            for (u32 phi = 0; phi < ts; ++phi) {
+                double d = std::fabs(slot[0] - Zr[phi]) + std::fabs(slot[1] - Zi[phi]);
+                if (d < bd) { bd = d; bestv = (int)phi; }
+            }
+            fprintf(stderr, "%3d%s", bd < 1e-6 ? bestv : -1, (p == m - 1 || p == 15) ? "" : ",");
+        }
+        fprintf(stderr, "   | 解析式 R*((m-brev)%%m)+j: ");
+        for (u32 p = 0; p < m && p < 16; ++p)
+            fprintf(stderr, "%3u%s", (u32)R * ((m - brev_u(p, bits)) & (m - 1)) + j, (p == m - 1 || p == 15) ? "" : ",");
+        fprintf(stderr, "\n");
+    }
+}
+
+int main() {
+    std::mt19937_64 rng(12345);
+    fprintf(stderr, "== 分层自测 ==\n");
+    int stage = 0;
+    discover(3, 16u);
+    discover(5, 16u);
+    for (u32 n : {64u, 256u}) stage += blk_test(n);
+    for (int R : {3, 5}) stage += map_test(R, 64u);
+    for (int R : {3, 5}) for (u32 m : {64u, 256u}) stage += rt_test(R, m);
+    for (int R : {3, 5}) for (u32 m : {64u, 256u}) stage += conv_test(R, m);
+    fprintf(stderr, "stage failures = %d\n\n== 端到端 (schoolbook 参照) ==\n", stage);
+    int bad3 = 0, bad5 = 0, bad2 = 0, n3 = 0, n5 = 0, n2 = 0;
+    for (int na = 64; na <= 24000; na = na + 1 + na / 23) {
+        const int nb = (na * 2) / 3 + 1;
+        if (na + nb >= (1 << 16)) break;
+        const size_t u = (size_t)na + nb;
+        const int k = pick_k(u);
+        const u32 lm = fft_len_for(u, k);
+        const int path = (lm % 3 == 0) ? 3 : ((lm % 5 == 0) ? 5 : 2);
+        if (path == 2 && n2 > 6) continue;              // 2 幂路径抽查即可
+        for (int i = 0; i < na; ++i) SA[i] = rng();
+        for (int i = 0; i < nb; ++i) SB[i] = rng();
+        mul_bf(SA, na, SB, nb, SR);
+        mul_fft(SA, na, SB, nb, SC);
+        bool ok = true;
+        for (size_t i = 0; i < u; ++i) if (SC[i] != SR[i]) { ok = false; break; }
+        if (path == 3) { ++n3; bad3 += !ok; }
+        else if (path == 5) { ++n5; bad5 += !ok; }
+        else { ++n2; bad2 += !ok; }
+        if (!ok) fprintf(stderr, "FAIL path=%d na=%d nb=%d u=%zu k=%d lm=%u m=%u\n",
+                         path, na, nb, u, k, lm, path == 2 ? 0u : (lm >> 1) / (u32)path);
+    }
+    fprintf(stderr, "path2: %d/%d bad   path3: %d/%d bad   path5: %d/%d bad\n",
+            bad2, n2, bad3, n3, bad5, n5);
+    return (bad2 || bad3 || bad5) ? 1 : 0;
+}
+#else
+int main() {
+    hugify(FB, sizeof FB);
+    hugify(GB, sizeof GB);
+    hugify(inbuf_, sizeof inbuf_);
+    hugify(outbuf, sizeof outbuf);
+    hugify(A, sizeof A);
+    hugify(B, sizeof B);
+    hugify(Rr, sizeof Rr);
+    int len = 0;
+    for (;;) {
+        long r = read(0, inbuf + len, INCAP - len);
+        if (r <= 0) break;
+        len += (int)r;
+    }
+    std::memset(inbuf + len, 0, 96);
+    inbuf[len] = '\n';
+
+    const char* p = inbuf;
+    while (*p < '0') ++p;
+    u32 T = 0;
+    while (*p > ' ') T = T * 10 + (u32)(*p++ - '0');
+
+    char* out = outbuf;
+    alignas(64) char tmp[96];
+
+    for (u32 t = 0; t < T; ++t) {
+        while (*p <= ' ') ++p;
+        int sa = (*p == '-'); p += sa;
+        const char* a0 = p;
+        int la = tok_len(p); p += la;
+        while (*p <= ' ') ++p;
+        int sb = (*p == '-'); p += sb;
+        const char* b0 = p;
+        int lb = tok_len(p); p += lb;
+        const int neg = sa ^ sb;
+
+        if (la <= 32 && lb <= 32) {
+            // ---------- 快路径: 128x128 -> 256 ----------
+            u128 av, bv;
+            if (la <= 16) av = hexpart(a0 + la, la);
+            else av = ((u128)hexpart(a0 + la - 16, la - 16) << 64) | hexfull(a0 + la);
+            if (lb <= 16) bv = hexpart(b0 + lb, lb);
+            else bv = ((u128)hexpart(b0 + lb - 16, lb - 16) << 64) | hexfull(b0 + lb);
+
+            const u64 x0 = (u64)av, x1 = (u64)(av >> 64);
+            const u64 y0 = (u64)bv, y1 = (u64)(bv >> 64);
+            u128 p00 = (u128)x0 * y0;
+            u128 p01 = (u128)x0 * y1;
+            u128 p10 = (u128)x1 * y0;
+            u128 p11 = (u128)x1 * y1;
+            u128 mid = (p00 >> 64) + (u64)p01 + (u64)p10;
+            u128 hi2 = (mid >> 64) + (p01 >> 64) + (p10 >> 64) + (u64)p11;
+            u64 r[4];
+            r[0] = (u64)p00;
+            r[1] = (u64)mid;
+            r[2] = (u64)hi2;
+            r[3] = (u64)(hi2 >> 64) + (u64)(p11 >> 64);
+
+            int n = 4;
+            while (n > 1 && r[n - 1] == 0) --n;
+            if (n == 1 && r[0] == 0) { *out++ = '0'; *out++ = '\n'; continue; }
+            *out = '-'; out += neg;
+            u64 top = r[n - 1];
+            int d = 16 - (int)(_lzcnt_u64(top) >> 2);
+            int total = d + ((n - 1) << 4);
+            // 右对齐到 tmp[64]，一次 64B 拷贝
+            char* w = tmp + 64 - ((size_t)n << 4);
+            for (int c = n - 1; c >= 0; --c) { hex16_store(r[c], w); w += 16; }
+            const char* src = tmp + 64 - total;
+            _mm256_storeu_si256((__m256i*)out, _mm256_loadu_si256((const __m256i*)src));
+            _mm256_storeu_si256((__m256i*)(out + 32), _mm256_loadu_si256((const __m256i*)(src + 32)));
+            out += total;
+            *out++ = '\n';
+            continue;
+        }
+
+        // ---------- 通用路径 ----------
+        int na = parse_limbs(a0, la, A);
+        int nb = parse_limbs(b0, lb, B);
+        while (na > 1 && A[na - 1] == 0) --na;
+        while (nb > 1 && B[nb - 1] == 0) --nb;
+        if ((na == 1 && A[0] == 0) || (nb == 1 && B[0] == 0)) { *out++ = '0'; *out++ = '\n'; continue; }
+
+        const u64 *pa = A, *pb = B;
+        int ma = na, mb = nb;
+        if (ma < mb) { const u64* t2 = pa; pa = pb; pb = t2; int t3 = ma; ma = mb; mb = t3; }
+        if (mb <= 48) mul_bf(pa, ma, pb, mb, Rr);
+        else mul_fft(pa, ma, pb, mb, Rr);
+        out = emit(out, Rr, ma + mb, neg);
+    }
+
+    long off = 0, n = out - outbuf;
+    while (off < n) {
+        long w = write(1, outbuf + off, n - off);
+        if (w <= 0) break;
+        off += w;
+    }
+    return 0;
+}
+#endif  // V16_SELFTEST
