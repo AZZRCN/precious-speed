@@ -30,37 +30,7 @@ Multiplication of Hex Big Integers
 	fft_killer_01	AC	17 ms	30.76 Mib
 	large_small_00	AC	14 ms	21.27 Mib
 */
-/*
-Submission #392236
-ID	Date	Problem	Lang	User	Status	Time	Memory
-392236	2026/8/12 18:15:38	
 
-Multiplication of Hex Big Integers
-	C++23	(Anonymous)	AC	18 ms	30.80 Mib
-Name	Status	Time	Memory
-example_00	AC	1 ms	0.55 Mib
-small_00	AC	7 ms	9.60 Mib
-medium_00	AC	6 ms	15.89 Mib
-medium_01	AC	6 ms	15.04 Mib
-medium_02	AC	6 ms	14.20 Mib
-large_00	AC	12 ms	13.79 Mib
-large_01	AC	12 ms	16.01 Mib
-large_02	AC	12 ms	16.04 Mib
-max_max_00	AC	17 ms	30.78 Mib
-max_max_01	AC	16 ms	30.29 Mib
-max_max_02	AC	16 ms	30.80 Mib
-max_max_03	AC	17 ms	29.02 Mib
-max_max_04	AC	18 ms	29.05 Mib
-max_max_05	AC	16 ms	30.75 Mib
-max_max_06	AC	18 ms	29.01 Mib
-max_max_07	AC	16 ms	30.68 Mib
-zero_00	AC	2 ms	4.81 Mib
-power_00	AC	6 ms	14.54 Mib
-power_01	AC	6 ms	15.77 Mib
-fft_killer_00	AC	16 ms	30.80 Mib
-fft_killer_01	AC	16 ms	30.43 Mib
-large_small_00	AC	15 ms	21.26 Mib
-*/
 
 // AZZRCN
 // https://github.com/AZZRCN
