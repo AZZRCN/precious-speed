@@ -1,0 +1,119 @@
+BIN=bin/ref_cand BASE=bin/ref_base CASES=27 TASKS=54 workers=14 mode=rb sweep= minB=0 maxB=1000000000000000000 reps=3 sysc=off
+[w13] done base_burnikel_ziegler_bound_02.in (left=40)
+[w10] done burnikel_ziegler_bound_02.in (left=39)
+[w9] done base_burnikel_ziegler_bound_00.in (left=38)
+[w6] done burnikel_ziegler_bound_00.in (left=37)
+[w12] done base_burnikel_ziegler_bound_03.in (left=36)
+[w13] done example_00.in (left=35)
+[w10] done base_example_00.in (left=34)
+[w9] done large_00.in (left=33)
+[w0] done a_max_b_random_00.in (left=32)
+[w2] done base_a_max_b_random_00.in (left=31)
+[w12] done large_01.in (left=30)
+[w6] done base_large_00.in (left=29)
+[w8] done burnikel_ziegler_bound_03.in (left=28)
+[w11] done base_burnikel_ziegler_bound_01.in (left=27)
+[w13] done base_large_01.in (left=26)
+[w1] done base_a_max_b_random_01.in (left=25)
+[w7] done burnikel_ziegler_bound_01.in (left=24)
+[w5] done a_max_b_random_01.in (left=23)
+[w4] done a_max_b_random_02.in (left=22)
+[w3] done base_a_max_b_random_02.in (left=21)
+[w4] done max_00.in (left=20)
+[w3] done base_max_00.in (left=19)
+[w4] done max_01.in (left=18)
+[w12] done length_ratio_integer_02.in (left=17)
+[w3] done base_max_01.in (left=16)
+[w10] done length_ratio_integer_00.in (left=15)
+[w4] done max_02.in (left=14)
+[w12] done base_max_02.in (left=13)
+[w2] done base_length_ratio_integer_01.in (left=12)
+[w6] done base_length_ratio_integer_02.in (left=11)
+[w1] done base_length_ratio_integer_04.in (left=10)
+[w13] done length_ratio_integer_04.in (left=9)
+[w9] done base_length_ratio_integer_00.in (left=8)
+[w5] done base_length_ratio_integer_05.in (left=7)
+[w0] done length_ratio_integer_01.in (left=6)
+[w12] done base_medium_01.in (left=5)
+[w8] done length_ratio_integer_03.in (left=4)
+[w2] done medium_02.in (left=3)
+[w4] done medium_01.in (left=2)
+[w3] done medium_00.in (left=1)
+[w7] done length_ratio_integer_05.in (left=0)
+[w11] done base_length_ratio_integer_03.in (left=0)
+[w6] done base_medium_02.in (left=0)
+[w10] done base_medium_00.in (left=0)
+[w1] done power_00.in (left=0)
+[w12] done base_r_nearly_zero_01.in (left=0)
+[w13] done base_power_00.in (left=0)
+[w8] done r_nearly_zero_02.in (left=0)
+[w0] done r_nearly_zero_01.in (left=0)
+[w2] done base_r_nearly_zero_02.in (left=0)
+[w9] done r_nearly_zero_00.in (left=0)
+[w5] done base_r_nearly_zero_00.in (left=0)
+[w4] done small_00.in (left=0)
+[w3] done base_small_00.in (left=0)
+MULTILEVEL (wall_ms / Ir(M) / D1mr / DLmr / LLmr / D1mw / DLmw / LLmw):
+  a_max_b_random_00.in wall=23 Ir=134.883 D1mr=2642897 DLmr=36437 LLmr=36437 D1mw=482298 DLmw=147693 LLmw=147693
+  a_max_b_random_01.in wall=33 Ir=199.838 D1mr=3996201 DLmr=43153 LLmr=43153 D1mw=643271 DLmw=272844 LLmw=272844
+  a_max_b_random_02.in wall=44 Ir=197.718 D1mr=4176834 DLmr=51870 LLmr=51870 D1mw=703619 DLmw=395581 LLmw=395581
+  burnikel_ziegler_bound_00.in wall=24 Ir=126.407 D1mr=62587 DLmr=57499 LLmr=57499 D1mw=36249 DLmw=35432 LLmw=35432
+  burnikel_ziegler_bound_01.in wall=22 Ir=192.558 D1mr=106303 DLmr=57607 LLmr=57607 D1mw=198618 DLmw=37623 LLmw=37623
+  burnikel_ziegler_bound_02.in wall=18 Ir=75.6022 D1mr=62687 DLmr=57568 LLmr=57568 D1mw=36255 DLmw=35433 LLmw=35433
+  burnikel_ziegler_bound_03.in wall=24 Ir=149.316 D1mr=137104 DLmr=57664 LLmr=57664 D1mw=226814 DLmw=49415 LLmw=49415
+  example_00.in wall=8 Ir=1.87165 D1mr=12038 DLmr=7508 LLmr=7508 D1mw=2761 DLmw=1976 LLmw=1976
+  large_00.in wall=9 Ir=8.15424 D1mr=137254 DLmr=56732 LLmr=56732 D1mw=67401 DLmw=29577 LLmw=29577
+  large_01.in wall=9 Ir=8.7121 D1mr=144405 DLmr=55485 LLmr=55485 D1mw=75124 DLmw=28992 LLmw=28992
+  length_ratio_integer_00.in wall=38 Ir=249.404 D1mr=4795566 DLmr=57892 LLmr=57892 D1mw=815820 DLmw=289545 LLmw=289545
+  length_ratio_integer_01.in wall=37 Ir=249.847 D1mr=5125891 DLmr=57770 LLmr=57770 D1mw=859524 DLmw=250227 LLmw=250227
+  length_ratio_integer_02.in wall=31 Ir=234.652 D1mr=4401854 DLmr=57838 LLmr=57838 D1mw=783521 DLmw=178645 LLmw=178645
+  length_ratio_integer_03.in wall=30 Ir=257.904 D1mr=4144847 DLmr=57733 LLmr=57733 D1mw=836808 DLmw=136327 LLmw=136327
+  length_ratio_integer_04.in wall=26 Ir=244.899 D1mr=3578649 DLmr=57677 LLmr=57677 D1mw=816500 DLmw=113328 LLmw=113328
+  length_ratio_integer_05.in wall=22 Ir=205.706 D1mr=3163871 DLmr=57636 LLmr=57636 D1mw=701047 DLmw=100381 LLmw=100381
+  max_00.in wall=10 Ir=10.9333 D1mr=211574 DLmr=57509 LLmr=57509 D1mw=65371 DLmw=64471 LLmw=64471
+  max_01.in wall=10 Ir=6.1188 D1mr=86538 DLmr=32500 LLmr=32500 D1mw=52816 DLmw=51970 LLmw=51970
+  max_02.in wall=9 Ir=7.96788 D1mr=149473 DLmr=57494 LLmr=57494 D1mw=52792 DLmw=51969 LLmw=51969
+  medium_00.in wall=18 Ir=40.1514 D1mr=69323 DLmr=64661 LLmr=64661 D1mw=37926 DLmw=37108 LLmw=37108
+  medium_01.in wall=10 Ir=12.2687 D1mr=62646 DLmr=57765 LLmr=57765 D1mw=28185 DLmw=27340 LLmw=27340
+  medium_02.in wall=9 Ir=8.46916 D1mr=62550 DLmr=57285 LLmr=57285 D1mw=44067 DLmw=27248 LLmw=27248
+  power_00.in wall=10 Ir=26.3361 D1mr=62397 DLmr=57609 LLmr=57609 D1mw=19698 DLmw=18884 LLmw=18884
+  r_nearly_zero_00.in wall=10 Ir=51.6815 D1mr=71501 DLmr=66840 LLmr=66840 D1mw=30078 DLmw=29260 LLmw=29260
+  r_nearly_zero_01.in wall=8 Ir=10.1567 D1mr=62435 DLmr=57610 LLmr=57610 D1mw=11386 DLmw=10343 LLmw=10343
+  r_nearly_zero_02.in wall=8 Ir=8.32699 D1mr=148510 DLmr=56096 LLmr=56096 D1mw=60066 DLmw=13976 LLmw=13976
+  small_00.in wall=13 Ir=98.0519 D1mr=80162 DLmr=75501 LLmr=75501 D1mw=51493 DLmw=50675 LLmw=50675
+
+════ RB 回归/改善报告 (BASE=bin/ref_base) ════
+TARGET=length_ratio_integer_03  Ir退化阈值=2.000000%
+CASE                 | Ir%     | wall%   | LLmr%   | sysc%   | flag
+a_max_b_random_00.in |   -0.50 |   -4.17 |   +0.00 |   +0.00 | ok
+a_max_b_random_01.in |   -0.14 |   +0.00 |   -0.00 |   +0.00 | ok
+a_max_b_random_02.in |   -0.68 |   -4.35 |   +0.00 |   +0.00 | ok
+burnikel_ziegler_bound_00.in |   +0.00 |  +33.33 |   +0.00 |   +0.00 | ok
+burnikel_ziegler_bound_01.in |   +0.69 |   +0.00 |   +0.00 |   +0.00 | ok
+burnikel_ziegler_bound_02.in |   +0.00 |  +20.00 |   +0.00 |   +0.00 | ok
+burnikel_ziegler_bound_03.in |   +0.74 |  +20.00 |   +0.00 |   +0.00 | ok
+example_00.in        |   +0.00 |   +0.00 |   +0.00 |   +0.00 | ok
+large_00.in          |   +0.00 |   +0.00 |   +0.00 |   +0.00 | ok
+large_01.in          |   +0.00 |  -10.00 |   +0.00 |   +0.00 | ok
+length_ratio_integer_00.in |   -0.61 |   +2.70 |   +0.00 |   +0.00 | ok
+length_ratio_integer_01.in |   -0.70 |   -2.63 |   +0.00 |   +0.00 | ok
+length_ratio_integer_02.in |   -0.46 |   +3.33 |   +0.00 |   +0.00 | ok
+length_ratio_integer_03.in |   -0.69 |  +11.11 |   +0.00 |   +0.00 | ok
+length_ratio_integer_04.in |   -0.40 |   +0.00 |   +0.00 |   +0.00 | ok
+length_ratio_integer_05.in |   -0.84 |   -4.35 |   +0.00 |   +0.00 | ok
+max_00.in            |   +0.00 |  -44.44 |   +0.00 |   +0.00 | ok
+max_01.in            |   +0.00 |  -33.33 |   +0.00 |   +0.00 | ok
+max_02.in            |   +0.00 |  +12.50 |   +0.00 |   +0.00 | ok
+medium_00.in         |   +0.00 |  +28.57 |   +0.00 |   +0.00 | ok
+medium_01.in         |   +0.00 |  +11.11 |   +0.00 |   +0.00 | ok
+medium_02.in         |   +0.00 |   +0.00 |   +0.00 |   +0.00 | ok
+power_00.in          |   +0.00 |  +11.11 |   +0.00 |   +0.00 | ok
+r_nearly_zero_00.in  |   +0.00 |   -9.09 |   +0.00 |   +0.00 | ok
+r_nearly_zero_01.in  |   +0.00 |   +0.00 |   +0.00 |   +0.00 | ok
+r_nearly_zero_02.in  |   +0.00 |  +14.29 |   +0.00 |   +0.00 | ok
+small_00.in          |   +0.00 |   +8.33 |   +0.00 |   +0.00 | ok
+────────────────────────────────────────────────────────
+Ir 退化点 (> 2.000000%): 0 个
+TARGET(length_ratio_integer_03) 改善: Ir=0.000000% wall=0.000000% LLmr=0.000000% sysc=0.000000%  -> 赢 0 个指标(负=改善)
+结论: 其他测试点 Ir 无退化 ✅(红利保留)
+UTIL workers=14 wall_s=6.7 busy_sum_s=86.0 util=91.4%

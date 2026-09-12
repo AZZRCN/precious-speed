@@ -1,0 +1,43 @@
+=== BUILD ===
+OPT_EXIT=0
+REF_EXIT=0
+=== ORACLE: canonical 26 LC cases (opt vs ref byte-diff) ===
+LC_canonical_diff_fail=0 of 26
+=== ORACLE: adversarial 46 cases (adv.in) ===
+ADV_opt_vs_ref: SAME
+ADV_ref_vs_base: SAME
+=== LC per-case instructions:u (opt vs ref) ===
+cases: 26
+
+case                                     opt             ref    delta%
+small#0                             92502560        91350238   -1.246%
+medium#0                            37889980        37431433   -1.210%
+medium#1                            11899274        11817849   -0.684%
+medium#2                             8372213         8369659   -0.031%
+large#0                              8068102         8067807   -0.004%
+large#1                              8625992         8625697   -0.003%
+max#0                                8347284         8347271   -0.000%
+max#1                                5233867         5233857   -0.000%
+max#2                                7783796         7783779   -0.000%
+a_max_b_random#0                   149045807       175446062  +17.713%
+a_max_b_random#1                   258263608       282767493   +9.488%
+a_max_b_random#2                   322715627       322761096   +0.014%
+power#0                             26111371        26081866   -0.113%
+r_nearly_zero#0                     48785036        48187114   -1.226%
+r_nearly_zero#1                      9916811         9879976   -0.371%
+r_nearly_zero#2                      8199529         8199127   -0.005%
+length_ratio_integer#0             395431577       395498208   +0.017%
+length_ratio_integer#1             309941651       341517938  +10.188%
+length_ratio_integer#2             308603957       353042979  +14.400%
+length_ratio_integer#3             278916442       333876761  +19.705%
+length_ratio_integer#4             259550402       316551314  +21.961%
+length_ratio_integer#5             208057102       258096150  +24.051%
+burnikel_ziegler_bound#0           126397234       126385977   -0.009%
+burnikel_ziegler_bound#1           247819990       247938992   +0.048%
+burnikel_ziegler_bound#2            75710724        75690320   -0.027%
+burnikel_ziegler_bound#3           159143490       161689742   +1.600%
+
+opt             MAX = 395431577  @ length_ratio_integer#0   (sum=3381333426)
+ref             MAX = 395498208  @ length_ratio_integer#0   (sum=3670638705)
+MAX-point delta: +0.017%
+=== DONE ===

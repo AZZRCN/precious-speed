@@ -1,0 +1,17 @@
+
+==== MUL HISTOGRAM (len=FFT real points) ====
+-- linear mul_fft --
+  L=327680    calls=1        sumL=327680        proxyIr~=16711680      
+  L=655360    calls=1        sumL=655360        proxyIr~=34078720      
+-- cyclic cyc_mul_* --
+  L=512       calls=2        sumL=1024          proxyIr~=43008         
+  L=1024      calls=2        sumL=2048          proxyIr~=88064         
+  L=2048      calls=2        sumL=4096          proxyIr~=180224        
+  L=4096      calls=2        sumL=8192          proxyIr~=368640        
+  L=8192      calls=2        sumL=16384         proxyIr~=753664        
+  L=16384     calls=2        sumL=32768         proxyIr~=1540096       
+  L=32768     calls=2        sumL=65536         proxyIr~=3145728       
+  L=65536     calls=2        sumL=131072        proxyIr~=6422528       
+  L=163840    calls=2        sumL=327680        proxyIr~=16384000      
+  L=327680    calls=2        sumL=655360        proxyIr~=33423360      
+  TOTAL calls=22       proxyIr~=113139712     

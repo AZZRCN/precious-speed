@@ -1,0 +1,122 @@
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <unistd.h>
+#include <setjmp.h>
+#include <signal.h>
+
+static sigjmp_buf g_jb;
+static void on_alarm(int){ siglongjmp(g_jb, 1); }
+
+// RRII layout: complex c -> re at 4*(c/2)+(c%2), im at 4*(c/2)+2+(c%2)
+static inline void getC(const double* x, size_t c, double& re, double& im){
+    size_t g=c>>1, l=c&1; re=x[4*g+l]; im=x[4*g+2+l];
+}
+static inline void setC(double* x, size_t c, double re, double im){
+    size_t g=c>>1, l=c&1; x[4*g+l]=re; x[4*g+2+l]=im;
+}
+// natural-order sub-DFT wrappers (production dif/idit are bit-reversed internally)
+static void dft_fwd(hint::transform::fft::FFT<double> &fft, double* buf, size_t M){
+    fft.dif<false>(buf, M); fft.bitrev_cmplx(buf, M);
+}
+static void dft_inv(hint::transform::fft::FFT<double> &fft, double* buf, size_t M){
+    fft.bitrev_cmplx(buf, M); fft.idit<false>(buf, M);
+}
+
+static void dif6rr(hint::transform::fft::FFT<double> &fft, double* x, size_t N,
+                   std::vector<double>& colbuf, std::vector<double>& rowbuf, std::vector<double>& tmp){
+    const size_t k = (size_t)log2((double)N);
+    const size_t N1 = size_t(1) << (k/2), N2 = N >> (k/2);
+    const double PI = 3.14159265358979323846;
+    colbuf.assign(2*N1, 0); rowbuf.assign(2*N2, 0); tmp.assign(2*N, 0);
+    for (size_t b=0;b<N2;++b){
+        for (size_t a=0;a<N1;++a){ double re,im; getC(x, a*N2+b, re, im); setC(colbuf.data(), a, re, im); }
+        dft_fwd(fft, colbuf.data(), N1);
+        for (size_t a=0;a<N1;++a){ double re,im; getC(colbuf.data(), a, re, im); setC(x, a*N2+b, re, im); }
+    }
+    for (size_t a=0;a<N1;++a)
+        for (size_t b=0;b<N2;++b){
+            double re,im; getC(x, a*N2+b, re, im);
+            double ang=-2*PI*a*b/N, wr=std::cos(ang), wi=std::sin(ang);
+            setC(x, a*N2+b, re*wr-im*wi, re*wi+im*wr);
+        }
+    for (size_t a=0;a<N1;++a){
+        for (size_t b=0;b<N2;++b){ double re,im; getC(x, a*N2+b, re, im); setC(rowbuf.data(), b, re, im); }
+        dft_fwd(fft, rowbuf.data(), N2);
+        for (size_t b=0;b<N2;++b){ double re,im; getC(rowbuf.data(), b, re, im); setC(x, a*N2+b, re, im); }
+    }
+    for (size_t a=0;a<N1;++a) for (size_t b=0;b<N2;++b){
+        double re,im; getC(x, a*N2+b, re, im); setC(tmp.data(), b*N1+a, re, im);
+    }
+    memcpy(x, tmp.data(), 2*N*sizeof(double));
+}
+static void idit6rr(hint::transform::fft::FFT<double> &fft, double* x, size_t N,
+                    std::vector<double>& colbuf, std::vector<double>& rowbuf, std::vector<double>& tmp){
+    const size_t k = (size_t)log2((double)N);
+    const size_t N1 = size_t(1) << (k/2), N2 = N >> (k/2);
+    const double PI = 3.14159265358979323846;
+    colbuf.assign(2*N1, 0); rowbuf.assign(2*N2, 0); tmp.assign(2*N, 0);
+    for (size_t a=0;a<N1;++a) for (size_t b=0;b<N2;++b){
+        double re,im; getC(x, a*N2+b, re, im); setC(tmp.data(), b*N1+a, re, im);
+    }
+    memcpy(x, tmp.data(), 2*N*sizeof(double));
+    for (size_t a=0;a<N1;++a){
+        for (size_t b=0;b<N2;++b){ double re,im; getC(x, a*N2+b, re, im); setC(rowbuf.data(), b, re, im); }
+        dft_inv(fft, rowbuf.data(), N2);
+        for (size_t b=0;b<N2;++b){ double re,im; getC(rowbuf.data(), b, re, im); setC(x, a*N2+b, re, im); }
+    }
+    for (size_t a=0;a<N1;++a)
+        for (size_t b=0;b<N2;++b){
+            double re,im; getC(x, a*N2+b, re, im);
+            double ang=2*PI*a*b/N, wr=std::cos(ang), wi=std::sin(ang);
+            setC(x, a*N2+b, re*wr-im*wi, re*wi+im*wr);
+        }
+    for (size_t b=0;b<N2;++b){
+        for (size_t a=0;a<N1;++a){ double re,im; getC(x, a*N2+b, re, im); setC(colbuf.data(), a, re, im); }
+        dft_inv(fft, colbuf.data(), N1);
+        for (size_t a=0;a<N1;++a){ double re,im; getC(colbuf.data(), a, re, im); setC(x, a*N2+b, re, im); }
+    }
+}
+
+int main(){
+    const size_t sizes[] = {256,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152};
+    signal(SIGALRM, on_alarm);
+    for (size_t N : sizes){
+        int tsec = (N <= 65536) ? 20 : (N <= 1048576 ? 60 : 120);
+        double maxrt=0, maxd=0;
+        int r;
+        if ((r = sigsetjmp(g_jb, 1)) == 0){
+            alarm(tsec);
+            hint::transform::fft::FFT<double> fft;
+            std::vector<double> o(2*N), a(2*N), b(2*N), c(2*N);
+            std::vector<double> cb, rb, tp;
+            uint64_t s = 0x9E3779B97F4A7C15ULL ^ (N * 2654435761ULL);
+            auto rnd = [&](){ s ^= s<<13; s ^= s>>7; s ^= s<<17;
+                return (double)((int64_t)(s & 0x7fffffffffffffffULL)) / (double)0x7fffffffffffffffULL * 2.0 - 1.0; };
+            // build RRII input
+            for (size_t cidx=0;cidx<N;++cidx){ double re=rnd(), im=rnd(); setC(o.data(), cidx, re, im); }
+            memcpy(a.data(), o.data(), 2*N*sizeof(double));
+            memcpy(b.data(), o.data(), 2*N*sizeof(double));
+            // reference: production dif<false> (RRII, bit-reversed output)
+            fft.expand(N);
+            fft.dif<false>(b.data(), N);
+            // 6-step forward (RRII, natural full DFT)
+            dif6rr(fft, a.data(), N, cb, rb, tp);
+            fft.bitrev_cmplx(a.data(), N);   // make bit-reversed to match dif's output order
+            maxd=0; for (size_t i=0;i<2*N;++i){ double d=std::fabs(a[i]-b[i]); if(d>maxd)maxd=d; }
+            // round trip
+            memcpy(c.data(), a.data(), 2*N*sizeof(double));
+            fft.bitrev_cmplx(c.data(), N);   // back to natural for idit6rr
+            idit6rr(fft, c.data(), N, cb, rb, tp);
+            maxrt=0; for (size_t i=0;i<2*N;++i){ double d=std::fabs(c[i]-o[i]); if(d>maxrt)maxrt=d; }
+            alarm(0);
+            printf("N=%-8zu max|dif6-dif|=%.3e max|rt|=%.3e\n", N, maxd, maxrt);
+        } else {
+            printf("N=%-8zu HANG\n", N);
+        }
+        fflush(stdout);
+    }
+    return 0;
+}

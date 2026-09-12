@@ -1,0 +1,35 @@
+# baseline 指令数基准 (callgrind, 确定性无噪声)
+# 机器: 192.168.1.66 = Intel Core Ultra 9 285H VM, 8 vCPU, VMware 未开 vPMC (perf 硬件事件不可用)
+# 二进制: g++ -O3 -std=c++17 -march=znver3 -mtune=znver3  hex_best/div.cpp -> base_zn.bin
+# 度量: valgrind --tool=callgrind --cache-sim=no --branch-sim=no  的 "I refs"
+# 校准: length_ratio_2 callgrind 470.62M  vs  .55 perf instructions 457.9M  (+2.8% 系统偏差, A/B 抵消)
+# 日期: 2026-08-13
+#
+# case            instr_M    cg_s
+length_ratio_0     421.38    1.18
+length_ratio_1     365.74    1.03
+length_ratio_2     470.62    1.22
+length_ratio_3     461.62    1.37
+length_ratio_4     486.82    1.77
+length_ratio_5     313.73    1.19
+amax_0               7.07    0.28
+amax_1             336.08    0.96
+amax_2             229.40    0.75
+max_0                7.07    0.28
+max_1                6.12    0.29
+max_2                7.07    0.28
+large_0            379.53    1.21
+large_1            335.63    1.13
+medium_0           230.48    0.73
+medium_1           231.57    0.76
+medium_2           231.23    0.74
+bzbound_0           14.89    0.33
+bzbound_1           14.46    0.33
+bzbound_2           14.57    0.34
+bzbound_3           14.41    0.34
+small_0            236.63    0.74
+power_0              4.31    0.27
+#
+# TOTAL = 4820.0M  (全套 callgrind 墙钟 ~18s)
+# 瓶颈排序: length_ratio_4 (486.8) > _2 (470.6) > _3 (461.6) > _0 (421.4) > large_0 (379.5)
+# 注: rnear_0/1/2 在 .55 上 base 与 mu2 双双浮点异常(该用例文件自身问题), 已从组列表剔除.

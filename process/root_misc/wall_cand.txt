@@ -1,0 +1,59 @@
+WALLBENCH bin=bin/ref_cand cases=27 reps=5 workers=14 minB=0 maxB=1000000000000000000
+[w13] large_01.in rounds=5 min=8 med=12.0 mean=11.6 (left=13)
+[w5] example_00.in rounds=5 min=7 med=12.0 mean=11.6 (left=12)
+[w7] large_00.in rounds=5 min=12 med=14.0 mean=14.6 (left=11)
+[w9] burnikel_ziegler_bound_02.in rounds=5 min=13 med=20.0 mean=17.6 (left=10)
+[w2] burnikel_ziegler_bound_00.in rounds=5 min=18 med=21.0 mean=21.4 (left=9)
+[w3] burnikel_ziegler_bound_03.in rounds=5 min=19 med=22.0 mean=23.0 (left=8)
+[w7] max_00.in rounds=5 min=9 med=10.0 mean=10.2 (left=7)
+[w8] burnikel_ziegler_bound_01.in rounds=5 min=25 med=27.0 mean=28.2 (left=6)
+[w9] max_01.in rounds=5 min=8 med=14.0 mean=13.0 (left=5)
+[w0] a_max_b_random_00.in rounds=5 min=22 med=35.0 mean=32.0 (left=4)
+[w12] length_ratio_integer_03.in rounds=5 min=27 med=27.0 mean=31.4 (left=3)
+[w2] max_02.in rounds=5 min=8 med=13.0 mean=12.4 (left=2)
+[w7] medium_01.in rounds=5 min=12 med=12.0 mean=13.8 (left=1)
+[w3] medium_00.in rounds=5 min=15 med=18.0 mean=17.6 (left=0)
+[w13] length_ratio_integer_04.in rounds=5 min=26 med=29.0 mean=29.2 (left=0)
+[w12] r_nearly_zero_01.in rounds=5 min=9 med=10.0 mean=9.6 (left=0)
+[w8] medium_02.in rounds=5 min=9 med=15.0 mean=13.6 (left=0)
+[w6] length_ratio_integer_02.in rounds=5 min=37 med=41.0 mean=44.2 (left=0)
+[w9] power_00.in rounds=5 min=10 med=13.0 mean=13.6 (left=0)
+[w5] length_ratio_integer_05.in rounds=5 min=22 med=27.0 mean=32.8 (left=0)
+[w2] r_nearly_zero_02.in rounds=5 min=11 med=11.0 mean=11.8 (left=0)
+[w1] a_max_b_random_01.in rounds=5 min=41 med=47.0 mean=48.0 (left=0)
+[w0] r_nearly_zero_00.in rounds=5 min=15 med=18.0 mean=18.8 (left=0)
+[w10] length_ratio_integer_01.in rounds=5 min=32 med=51.0 mean=52.0 (left=0)
+[w11] length_ratio_integer_00.in rounds=5 min=32 med=53.0 mean=54.2 (left=0)
+[w7] small_00.in rounds=5 min=13 med=14.0 mean=16.0 (left=0)
+[w4] a_max_b_random_02.in rounds=5 min=35 med=65.0 mean=57.8 (left=0)
+
+════ 墙钟多轮汇总 (ms; min/med/mean) ════
+CASE                               min       med      mean
+a_max_b_random_00.in                22      35.0      32.0
+a_max_b_random_01.in                41      47.0      48.0
+a_max_b_random_02.in                35      65.0      57.8
+burnikel_ziegler_bound_00.in        18      21.0      21.4
+burnikel_ziegler_bound_01.in        25      27.0      28.2
+burnikel_ziegler_bound_02.in        13      20.0      17.6
+burnikel_ziegler_bound_03.in        19      22.0      23.0
+example_00.in                        7      12.0      11.6
+large_00.in                         12      14.0      14.6
+large_01.in                          8      12.0      11.6
+length_ratio_integer_00.in          32      53.0      54.2
+length_ratio_integer_01.in          32      51.0      52.0
+length_ratio_integer_02.in          37      41.0      44.2
+length_ratio_integer_03.in          27      27.0      31.4
+length_ratio_integer_04.in          26      29.0      29.2
+length_ratio_integer_05.in          22      27.0      32.8
+max_00.in                            9      10.0      10.2
+max_01.in                            8      14.0      13.0
+max_02.in                            8      13.0      12.4
+medium_00.in                        15      18.0      17.6
+medium_01.in                        12      12.0      13.8
+medium_02.in                         9      15.0      13.6
+power_00.in                         10      13.0      13.6
+r_nearly_zero_00.in                 15      18.0      18.8
+r_nearly_zero_01.in                  9      10.0       9.6
+r_nearly_zero_02.in                 11      11.0      11.8
+small_00.in                         13      14.0      16.0
+UTIL workers=14 wall_s=0.3 busy_sum_s=3.4 util=82.1%

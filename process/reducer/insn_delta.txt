@@ -1,0 +1,23 @@
+# insn_delta.txt — 指令数实测对照（唯一真值: VM66 callgrind I refs）
+# 度量脚本: reducer/bench.py  |  连接: tools/vm_ssh.py (192.168.1.66 azzr/1234)
+# 编译: -O3 -march=haswell (AVX2/FMA/BMI2, 匹配判官 Zen3)
+
+## 基线 (v27, md5 5b7bafa1)
+- 单巨例 cases.txt.big (103900 limbs ÷ 51950 limbs):  I refs = 206,952,320
+- 指令构成 (先验拆解): ~88% FFT 乘 / ~11% 脚手架
+
+## SoA 蝶形跃迁提案 (reducer/soa_poc.cpp 微基准, 400万次复数乘, 输入随循环变化)
+- AoS (cmulv, 2级L1 twiddle, 现有):  I refs = 134,746,238
+- SoA (纯2-FMA, 无shuffle):          I refs = 138,766,733   (+3.0%, 更差)
+- 数值一致性: SoA vs AoS 0 失配 / 100000 随机样例 (数学等价成立)
+- 结论: SoA 在"指令数"维度不成立 -> 已排除。原因: SoA 拆出4条独立加载流抵消shuffle节省。
+
+## 已确认死路 (勿重走)
+- L3 缓存调参: L3 sweep 8/16/24/32MB -> I refs/miss 完全一致 (热数据常驻L2)
+- NTT 整数FFT: 慢 60-85x (放弃)
+- AVX-512: 判官 Zen3 无AVX-512, 3x 时间惩罚 (禁用)
+
+## 待优化 (下一步, 算法级)
+- 除法路由 crossover 优化 (newton vs BZ)
+- 卷积复用 (BZ 除数正变换/商余 FFT 复用)
+- 巨 limb 数下 Nussbaumer 短卷积 NTT 是否翻盘

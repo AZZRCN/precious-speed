@@ -1,0 +1,57 @@
+BIN=bin/ref_base BASE=(none) CASES=27 TASKS=27 workers=14 mode=multilevel sweep= minB=0 maxB=1000000000000000000 reps=3 sysc=off
+[w9] done large_01.in (left=13)
+[w13] done large_00.in (left=12)
+[w7] done example_00.in (left=11)
+[w5] done burnikel_ziegler_bound_02.in (left=10)
+[w4] done burnikel_ziegler_bound_00.in (left=9)
+[w5] done max_01.in (left=8)
+[w7] done max_00.in (left=7)
+[w6] done burnikel_ziegler_bound_03.in (left=6)
+[w4] done max_02.in (left=5)
+[w0] done a_max_b_random_00.in (left=4)
+[w3] done burnikel_ziegler_bound_01.in (left=3)
+[w7] done medium_01.in (left=2)
+[w6] done medium_02.in (left=1)
+[w1] done a_max_b_random_02.in (left=0)
+[w12] done length_ratio_integer_03.in (left=0)
+[w5] done medium_00.in (left=0)
+[w4] done power_00.in (left=0)
+[w11] done length_ratio_integer_02.in (left=0)
+[w2] done a_max_b_random_01.in (left=0)
+[w8] done length_ratio_integer_00.in (left=0)
+[w10] done length_ratio_integer_01.in (left=0)
+[w3] done r_nearly_zero_01.in (left=0)
+[w0] done r_nearly_zero_00.in (left=0)
+[w7] done r_nearly_zero_02.in (left=0)
+[w13] done length_ratio_integer_05.in (left=0)
+[w9] done length_ratio_integer_04.in (left=0)
+[w6] done small_00.in (left=0)
+MULTILEVEL (wall_ms / Ir(M) / D1mr / DLmr / LLmr / D1mw / DLmw / LLmw):
+  a_max_b_random_00.in wall=24 Ir=135.567 D1mr=2643163 DLmr=36437 LLmr=36437 D1mw=482478 DLmw=147690 LLmw=147690
+  a_max_b_random_01.in wall=35 Ir=200.127 D1mr=3996385 DLmr=43154 LLmr=43154 D1mw=643410 DLmw=272844 LLmw=272844
+  a_max_b_random_02.in wall=44 Ir=199.069 D1mr=4177802 DLmr=51870 LLmr=51870 D1mw=704015 DLmw=395580 LLmw=395580
+  burnikel_ziegler_bound_00.in wall=17 Ir=126.407 D1mr=62587 DLmr=57499 LLmr=57499 D1mw=36249 DLmw=35432 LLmw=35432
+  burnikel_ziegler_bound_01.in wall=25 Ir=191.239 D1mr=104723 DLmr=57607 LLmr=57607 D1mw=198654 DLmw=37623 LLmw=37623
+  burnikel_ziegler_bound_02.in wall=14 Ir=75.6022 D1mr=62687 DLmr=57568 LLmr=57568 D1mw=36255 DLmw=35433 LLmw=35433
+  burnikel_ziegler_bound_03.in wall=23 Ir=148.224 D1mr=136769 DLmr=57664 LLmr=57664 D1mw=226767 DLmw=49419 LLmw=49419
+  example_00.in wall=8 Ir=1.87165 D1mr=12038 DLmr=7508 LLmr=7508 D1mw=2761 DLmw=1976 LLmw=1976
+  large_00.in wall=16 Ir=8.15424 D1mr=137254 DLmr=56732 LLmr=56732 D1mw=67401 DLmw=29577 LLmw=29577
+  large_01.in wall=9 Ir=8.7121 D1mr=144405 DLmr=55485 LLmr=55485 D1mw=75124 DLmw=28992 LLmw=28992
+  length_ratio_integer_00.in wall=33 Ir=250.923 D1mr=4796280 DLmr=57892 LLmr=57892 D1mw=816269 DLmw=289543 LLmw=289543
+  length_ratio_integer_01.in wall=35 Ir=251.608 D1mr=5126754 DLmr=57770 LLmr=57770 D1mw=860131 DLmw=250227 LLmw=250227
+  length_ratio_integer_02.in wall=29 Ir=235.739 D1mr=4402276 DLmr=57838 LLmr=57838 D1mw=783820 DLmw=178642 LLmw=178642
+  length_ratio_integer_03.in wall=29 Ir=259.697 D1mr=4145485 DLmr=57733 LLmr=57733 D1mw=837727 DLmw=136327 LLmw=136327
+  length_ratio_integer_04.in wall=18 Ir=245.881 D1mr=3576552 DLmr=57677 LLmr=57677 D1mw=816548 DLmw=113324 LLmw=113324
+  length_ratio_integer_05.in wall=18 Ir=207.456 D1mr=3164809 DLmr=57636 LLmr=57636 D1mw=701842 DLmw=100381 LLmw=100381
+  max_00.in wall=17 Ir=10.9333 D1mr=211574 DLmr=57509 LLmr=57509 D1mw=65371 DLmw=64471 LLmw=64471
+  max_01.in wall=15 Ir=6.1188 D1mr=86538 DLmr=32500 LLmr=32500 D1mw=52816 DLmw=51970 LLmw=51970
+  max_02.in wall=11 Ir=7.96788 D1mr=149473 DLmr=57494 LLmr=57494 D1mw=52792 DLmw=51969 LLmw=51969
+  medium_00.in wall=16 Ir=40.1514 D1mr=69323 DLmr=64661 LLmr=64661 D1mw=37926 DLmw=37108 LLmw=37108
+  medium_01.in wall=10 Ir=12.2687 D1mr=62646 DLmr=57765 LLmr=57765 D1mw=28185 DLmw=27340 LLmw=27340
+  medium_02.in wall=12 Ir=8.46916 D1mr=62550 DLmr=57285 LLmr=57285 D1mw=44067 DLmw=27248 LLmw=27248
+  power_00.in wall=11 Ir=26.3361 D1mr=62397 DLmr=57609 LLmr=57609 D1mw=19698 DLmw=18884 LLmw=18884
+  r_nearly_zero_00.in wall=13 Ir=51.6815 D1mr=71501 DLmr=66840 LLmr=66840 D1mw=30078 DLmw=29260 LLmw=29260
+  r_nearly_zero_01.in wall=8 Ir=10.1567 D1mr=62435 DLmr=57610 LLmr=57610 D1mw=11386 DLmw=10343 LLmw=10343
+  r_nearly_zero_02.in wall=7 Ir=8.32699 D1mr=148510 DLmr=56096 LLmr=56096 D1mw=60066 DLmw=13976 LLmw=13976
+  small_00.in wall=11 Ir=98.0519 D1mr=80162 DLmr=75501 LLmr=75501 D1mw=51493 DLmw=50675 LLmw=50675
+UTIL workers=14 wall_s=3.6 busy_sum_s=43.1 util=85.2%

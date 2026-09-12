@@ -1,0 +1,7 @@
+  IB  oracle             #0            MAX                       @MAX          total
+  32      OK      395419289      395419289     length_ratio_integer#0     3379341945
+  48      OK      395431550      395431550     length_ratio_integer#0     3381333395
+  64      OK      395431548      395431548     length_ratio_integer#0     3383274403
+  96      OK      395488766      395488766     length_ratio_integer#0     3390572254
+ 128      OK      395488766      395488766     length_ratio_integer#0     3399467315
+=== DONE ===

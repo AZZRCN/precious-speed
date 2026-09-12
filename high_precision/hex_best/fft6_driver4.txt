@@ -1,0 +1,53 @@
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <unistd.h>
+#include <setjmp.h>
+#include <signal.h>
+
+static sigjmp_buf g_jb;
+static void on_alarm(int){ siglongjmp(g_jb, 1); }
+
+static inline void getC(const double* x, size_t c, double& re, double& im){
+    size_t g=c>>1, l=c&1; re=x[4*g+l]; im=x[4*g+2+l];
+}
+static inline void setC(double* x, size_t c, double re, double im){
+    size_t g=c>>1, l=c&1; x[4*g+l]=re; x[4*g+2+l]=im;
+}
+
+int main(){
+    signal(SIGALRM, on_alarm);
+    size_t sizes[] = {64,256,1024,4096};
+    for (size_t N : sizes){
+        int tsec = 30; double e1=0,e2=0,e3=0;
+        int r;
+        if ((r = sigsetjmp(g_jb,1))==0){
+            alarm(tsec);
+            hint::transform::fft::FFT<double> fft;
+            std::vector<double> o(2*N), a(2*N), b(2*N);
+            uint64_t s = 0x9E3779B97F4A7C15ULL ^ (N*2654435761ULL);
+            auto rnd=[&](){ s^=s<<13; s^=s>>7; s^=s<<17;
+                return (double)((int64_t)(s&0x7fffffffffffffffULL))/(double)0x7fffffffffffffffULL*2.0-1.0; };
+            for (size_t c=0;c<N;++c) setC(o.data(), c, rnd(), rnd());
+            // test 2: getC/setC identity
+            memcpy(a.data(), o.data(), 2*N*sizeof(double));
+            for (size_t c=0;c<N;++c){ double re,im; getC(a.data(),c,re,im); setC(b.data(),c,re,im); }
+            e2=0; for (size_t i=0;i<2*N;++i){ double d=std::fabs(b[i]-a[i]); if(d>e2)e2=d; }
+            // test 1: dif<false> -> idit<false> identity on RRII
+            memcpy(a.data(), o.data(), 2*N*sizeof(double));
+            fft.expand(N);
+            fft.dif<false>(a.data(), N);
+            fft.idit<false>(a.data(), N);
+            e1=0; for (size_t i=0;i<2*N;++i){ double d=std::fabs(a[i]-o[i]); if(d>e1)e1=d; }
+            // test 3: dif<false> alone, then compare to idit<false> of a zero-input scaled? skip
+            alarm(0);
+            printf("N=%-6zu  dif-idit rt err=%.3e   getC/setC err=%.3e\n", N, e1, e2);
+        } else {
+            printf("N=%-6zu HANG\n", N);
+        }
+        fflush(stdout);
+    }
+    return 0;
+}

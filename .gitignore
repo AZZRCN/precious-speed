@@ -1,73 +1,17 @@
-# Compiled binaries / 编译产物
+# ==== precious_speed 结算版 .gitignore ====
+# 只排除真正无归档价值的产物; 其余过程文件全部入库 (2026-09-13 结算)
+
+# 编译产物 / 编译缓存
 *.exe
 *.o
 *.obj
-
-# Test artifacts / 测试产物 (运行时生成, 可重新生成)
-logs/
-testdata/
-
-# Python cache / Python 缓存
-__pycache__/
+*.dll
 *.pyc
+__pycache__/
 
-# IDE / 编辑器
-.vscode/
-.idea/
-
-# Build directories / 构建目录
-benchmark_*/
-
-# OS / 操作系统
-Thumbs.db
-desktop.ini
-
-# 临时大文件 / 临时大文件
-*.tmp
-*.bak
-
-# 隐私文件 / Privacy (含 VM 凭据，禁止提交)
-ssh_manager.py
-scripts/
-!scripts/.gitkeep
-
-# 无关项目探索记录 / Unrelated project exploration
-exploration/
-
-# 临时日志和记录 / Temp logs and notes
-2026年*.md
-*.log
-moptm_vec.log
-
-# Winbench 大数据文件 / Large test data
-winbench/*.in
-winbench/*.csv
-
-# AAMP 压缩产物参考（含 VM 路径，untracked）
-shrunk_ADD_v4_ref.cpp
-
-# 临时目录 / Temp directories
-temp/
-
-# Agent memory / 不提交
+# WorkBuddy 本体 (明令不入库)
 .workbuddy/
 
-# 大体积可再生数据 / bulk regenerable data (test inputs, run dumps, artifacts)
-*.in
-*.ans
-*.out
-*.dll
-*.tgz
-*.s
-cases/
-cases_lf/
-bench_data/
-
-# 工作过程目录 / Local working-process dirs (不入库, 2026-09-13 结算)
-tools/
-reducer/
-_xfer/
-avx2_opt/
-vm_src_backup/
-=
-BEST_20260913_draft/
+# 系统文件
+Thumbs.db
+desktop.ini

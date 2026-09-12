@@ -1,0 +1,51 @@
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <unistd.h>
+#include <setjmp.h>
+#include <signal.h>
+
+static sigjmp_buf g_jb;
+static void on_alarm(int){ siglongjmp(g_jb, 1); }
+
+static void test_one(double &maxd, double &maxrt, size_t N){
+    hint::transform::fft::FFT<double> fft;
+    std::vector<double> o(2*N), a(2*N), b(2*N), c(2*N);
+    uint64_t s = 0x9E3779B97F4A7C15ULL ^ (N * 2654435761ULL);
+    auto rnd = [&](){ s ^= s<<13; s ^= s>>7; s ^= s<<17;
+        return (double)((int64_t)(s & 0x7fffffffffffffffULL)) / (double)0x7fffffffffffffffULL * 2.0 - 1.0; };
+    for (size_t i=0;i<2*N;++i) o[i] = rnd();
+    memcpy(a.data(), o.data(), 2*N*sizeof(double));
+    memcpy(b.data(), o.data(), 2*N*sizeof(double));
+    fft.expand(N);
+    fft.dif<false>(b.data(), N);      // reference: production recursive transform
+    fft.dif6<false>(a.data(), N);     // 6-step forward
+    maxd = 0;
+    for (size_t i=0;i<2*N; ++i){ double d = std::fabs(a[i]-b[i]); if (d>maxd) maxd=d; }
+    memcpy(c.data(), a.data(), 2*N*sizeof(double));
+    fft.idit6<false>(c.data(), N);    // 6-step inverse
+    maxrt = 0;
+    for (size_t i=0;i<2*N; ++i){ double d = std::fabs(c[i]-o[i]); if (d>maxrt) maxrt=d; }
+}
+
+int main(){
+    const size_t sizes[] = {256,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,4194304};
+    signal(SIGALRM, on_alarm);
+    for (size_t N : sizes){
+        int tsec = (N <= 65536) ? 20 : (N <= 1048576 ? 60 : 120);
+        double maxd=0, maxrt=0;
+        int r;
+        if ((r = sigsetjmp(g_jb, 1)) == 0){
+            alarm(tsec);
+            test_one(maxd, maxrt, N);
+            alarm(0);
+            printf("N=%-8zu max|dif6-dif|=%.3e max|rt|=%.3e  OK\n", N, maxd, maxrt);
+        } else {
+            printf("N=%-8zu HANG (alarm %ds)\n", N, tsec);
+        }
+        fflush(stdout);
+    }
+    return 0;
+}

@@ -1,0 +1,5 @@
+opt_off oracle: OK
+BZALL=1 oracle: OK
+OFF     #0=    395431549  MAX=    395431549 @ length_ratio_integer#0     total=   3381333381
+BZALL1  #0=    395431779  MAX=    395431779 @ length_ratio_integer#0     total=   3381339389
+=== DONE ===

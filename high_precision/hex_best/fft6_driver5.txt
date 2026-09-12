@@ -1,0 +1,58 @@
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <unistd.h>
+#include <setjmp.h>
+#include <signal.h>
+
+static sigjmp_buf g_jb;
+static void on_alarm(int){ siglongjmp(g_jb, 1); }
+static inline void getC(const double* x, size_t c, double& re, double& im){
+    size_t g=c>>1, l=c&1; re=x[4*g+l]; im=x[4*g+2+l];
+}
+static inline void setC(double* x, size_t c, double re, double im){
+    size_t g=c>>1, l=c&1; x[4*g+l]=re; x[4*g+2+l]=im;
+}
+// Parseval energy in RRII
+static double energy(const double* x, size_t N){
+    double s=0; for (size_t c=0;c<N;++c){ double re,im; getC(x,c,re,im); s+=re*re+im*im; } return s;
+}
+
+int main(){
+    signal(SIGALRM, on_alarm);
+    size_t sizes[] = {64,256,1024,4096};
+    for (size_t N : sizes){
+        int tsec=30; double e_in=0, e_dif=0, r1=0, r2=0;
+        int r;
+        if ((r=sigsetjmp(g_jb,1))==0){
+            alarm(tsec);
+            hint::transform::fft::FFT<double> fft;
+            std::vector<double> o(2*N), a(2*N), b(2*N);
+            uint64_t s=0x9E3779B97F4A7C15ULL^(N*2654435761ULL);
+            auto rnd=[&](){ s^=s<<13; s^=s>>7; s^=s<<17;
+                return (double)((int64_t)(s&0x7fffffffffffffffULL))/(double)0x7fffffffffffffffULL*2.0-1.0; };
+            for (size_t c=0;c<N;++c) setC(o.data(), c, rnd(), rnd());
+            e_in = energy(o.data(), N);
+            // dif alone: check Parseval (should be N * e_in if no scaling, or scaled)
+            memcpy(a.data(), o.data(), 2*N*sizeof(double));
+            fft.expand(N);
+            fft.dif<false>(a.data(), N);
+            e_dif = energy(a.data(), N);
+            // R1: dif -> idit (no bitrev)
+            memcpy(a.data(), o.data(), 2*N*sizeof(double));
+            fft.dif<false>(a.data(), N); fft.idit<false>(a.data(), N);
+            r1=0; for (size_t i=0;i<2*N;++i){ double d=std::fabs(a[i]-o[i]); if(d>r1)r1=d; }
+            // R2: dif -> bitrev -> idit
+            memcpy(a.data(), o.data(), 2*N*sizeof(double));
+            fft.dif<false>(a.data(), N); fft.bitrev_cmplx(a.data(), N); fft.idit<false>(a.data(), N);
+            r2=0; for (size_t i=0;i<2*N;++i){ double d=std::fabs(a[i]-o[i]); if(d>r2)r2=d; }
+            alarm(0);
+            printf("N=%-6zu  Ein=%.3e  Edif=%.3e  Edif/N=%.3e  R1(no-br)=%.3e  R2(br)=%.3e\n",
+                   N, e_in, e_dif, e_dif/N, r1, r2);
+        } else { printf("N=%-6zu HANG\n", N); }
+        fflush(stdout);
+    }
+    return 0;
+}

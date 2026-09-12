@@ -1,0 +1,15 @@
+BIN=bin/ref_base BASE=(none) CASES=6 TASKS=6 workers=14 mode=syscall sweep= minB=0 maxB=1000000000000000000 reps=3 sysc=off
+[w2] done max_00.in (left=0)
+[w7] done medium_00.in (left=0)
+[w3] done r_nearly_zero_00.in (left=0)
+[w4] done small_00.in (left=0)
+[w1] done a_max_b_random_00.in (left=0)
+[w0] done length_ratio_integer_03.in (left=0)
+MULTILEVEL (wall_ms / Ir(M) / D1mr / DLmr / LLmr / D1mw / DLmw / LLmw / sysc_total / sysc_write):
+  a_max_b_random_00.in wall=0 Ir=0 D1mr=0 DLmr=0 LLmr=0 D1mw=0 DLmw=0 LLmw=0 sysc=1 syscW=1
+  length_ratio_integer_03.in wall=0 Ir=0 D1mr=0 DLmr=0 LLmr=0 D1mw=0 DLmw=0 LLmw=0 sysc=1 syscW=1
+  max_00.in wall=0 Ir=0 D1mr=0 DLmr=0 LLmr=0 D1mw=0 DLmw=0 LLmw=0 sysc=1 syscW=1
+  medium_00.in wall=0 Ir=0 D1mr=0 DLmr=0 LLmr=0 D1mw=0 DLmw=0 LLmw=0 sysc=1 syscW=1
+  r_nearly_zero_00.in wall=0 Ir=0 D1mr=0 DLmr=0 LLmr=0 D1mw=0 DLmw=0 LLmw=0 sysc=1 syscW=1
+  small_00.in wall=0 Ir=0 D1mr=0 DLmr=0 LLmr=0 D1mw=0 DLmw=0 LLmw=0 sysc=1 syscW=1
+UTIL workers=14 wall_s=0.0 busy_sum_s=0.2 util=33.6%

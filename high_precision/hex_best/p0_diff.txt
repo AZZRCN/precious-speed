@@ -1,0 +1,152 @@
+--- /d/precious_speed/hex_best/div_base16_bak_20260815.cpp	2026-08-15 19:50:53.467671500 +0800
++++ /d/precious_speed/hex_best/div_base16.cpp	2026-08-15 19:56:16.212608800 +0800
+@@ -451,7 +451,10 @@
+ #define HINT_ASSUME(cond) do { if (!(cond)) __builtin_unreachable(); } while(0)
+ #endif
+ #ifndef HINT_PREFETCH
+-#define HINT_PREFETCH(addr, rw, locality) __builtin_prefetch((addr), (rw), (locality))
++// P0-a: 关闭软件预取。指令数指标下 __builtin_prefetch 本身计入指令条数且为纯开销
++// (Zen3 硬件 stream prefetcher 已覆盖顺序访问)；关闭后 instructions:u 下降，cache-miss
++// 可能略升但不计入本真值度量。所有调用点 (difC4/iditC4/dif3StageC4/idit3StageC4/carryPropSeg) 一并失效。
++#define HINT_PREFETCH(addr, rw, locality) ((void)0)
+ #endif
+ #ifndef HINT_PROB_LIKELY
+ #define HINT_PROB_LIKELY(x, p)   __builtin_expect_with_probability(!!(x), 1, (p))
+@@ -1368,10 +1371,27 @@
+                         auto tp3 = reinterpret_cast<const double *>(
+                             __builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                         auto it = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+-                        for (size_t k = fft_len / 16; k > 0; k--, it += 8, tp1 += 8, tp3 += 8)
++                        // P0-c: 2x 展开 (it+=16 每组处理 2 个蝶形), 循环控制指令减半
++                        size_t k = fft_len / 16;
++                        for (; k >= 2; k -= 2, it += 16, tp1 += 16, tp3 += 16)
++                        {
++                            C4d c0 = c4loadM<IN_MODE>(it), c1 = c4loadM<IN_MODE>(it + s1);
++                            C4d c2 = c4loadM<IN_MODE>(it + s2), c3 = c4loadM<IN_MODE>(it + s3);
++                            difSplitC4(c0, c1, c2, c3);
++                            c4store(it, c0);
++                            c4store(it + s1, c1);
++                            c4store(it + s2, c4mul(c2, c4load(tp1)));
++                            c4store(it + s3, c4mul(c3, c4load(tp3)));
++                            C4d d0 = c4loadM<IN_MODE>(it + 8), d1 = c4loadM<IN_MODE>(it + s1 + 8);
++                            C4d d2 = c4loadM<IN_MODE>(it + s2 + 8), d3 = c4loadM<IN_MODE>(it + s3 + 8);
++                            difSplitC4(d0, d1, d2, d3);
++                            c4store(it + 8, d0);
++                            c4store(it + s1 + 8, d1);
++                            c4store(it + s2 + 8, c4mul(d2, c4load(tp1 + 8)));
++                            c4store(it + s3 + 8, c4mul(d3, c4load(tp3 + 8)));
++                        }
++                        if (k)
+                         {
+-                            HINT_PREFETCH(tp1 + 16, 0, 1);
+-                            HINT_PREFETCH(tp3 + 16, 0, 1);
+                             C4d c0 = c4loadM<IN_MODE>(it), c1 = c4loadM<IN_MODE>(it + s1);
+                             C4d c2 = c4loadM<IN_MODE>(it + s2), c3 = c4loadM<IN_MODE>(it + s3);
+                             difSplitC4(c0, c1, c2, c3);
+@@ -1408,10 +1428,29 @@
+                         auto tp3 = reinterpret_cast<const double *>(
+                             __builtin_assume_aligned(table3.getBegin(fft_len), 32));
+                         auto it = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+-                        for (size_t k = fft_len / 16; k > 0; k--, it += 8, tp1 += 8, tp3 += 8)
++                        // P0-c: 2x 展开 (it+=16 每组处理 2 个蝶形), 循环控制指令减半
++                        size_t k = fft_len / 16;
++                        for (; k >= 2; k -= 2, it += 16, tp1 += 16, tp3 += 16)
++                        {
++                            C4d c0 = c4load(it), c1 = c4load(it + s1);
++                            C4d c2 = c4mulConj(c4load(it + s2), c4load(tp1));
++                            C4d c3 = c4mulConj(c4load(it + s3), c4load(tp3));
++                            iditSplitC4(c0, c1, c2, c3);
++                            c4storeM<OUT_MODE>(it, c0);
++                            c4storeM<OUT_MODE>(it + s1, c1);
++                            c4storeM<OUT_MODE>(it + s2, c2);
++                            c4storeM<OUT_MODE>(it + s3, c3);
++                            C4d d0 = c4load(it + 8), d1 = c4load(it + s1 + 8);
++                            C4d d2 = c4mulConj(c4load(it + s2 + 8), c4load(tp1 + 8));
++                            C4d d3 = c4mulConj(c4load(it + s3 + 8), c4load(tp3 + 8));
++                            iditSplitC4(d0, d1, d2, d3);
++                            c4storeM<OUT_MODE>(it + 8, d0);
++                            c4storeM<OUT_MODE>(it + s1 + 8, d1);
++                            c4storeM<OUT_MODE>(it + s2 + 8, d2);
++                            c4storeM<OUT_MODE>(it + s3 + 8, d3);
++                        }
++                        if (k)
+                         {
+-                            HINT_PREFETCH(tp1 + 16, 0, 1);
+-                            HINT_PREFETCH(tp3 + 16, 0, 1);
+                             C4d c0 = c4load(it), c1 = c4load(it + s1);
+                             C4d c2 = c4mulConj(c4load(it + s2), c4load(tp1));
+                             C4d c3 = c4mulConj(c4load(it + s3), c4load(tp3));
+@@ -2164,10 +2203,33 @@
+                 auto p2 = reinterpret_cast<const double *>(__builtin_assume_aligned(t2.getBegin(m), 32));
+                 double *b0 = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+                 double *b1 = b0 + m * 2, *b2 = b0 + m * 4;
+-                for (size_t c = m / 4; c > 0; c--, b0 += 8, b1 += 8, b2 += 8, p1 += 8, p2 += 8)
++                // P0-c: 2x 展开 (b0+=16 每组处理 2 个蝶形)
++                size_t c = m / 4;
++                for (; c >= 2; c -= 2, b0 += 16, b1 += 16, b2 += 16, p1 += 16, p2 += 16)
++                {
++                    const C4d a0 = c4loadM<RIRI_IN ? 2 : 1>(b0);
++                    const C4d a1 = c4loadM<RIRI_IN ? 2 : 1>(b1);
++                    const C4d a2 = c4loadM<RIRI_IN ? 2 : 1>(b2);
++                    const __m256d sr = a1.re + a2.re, si = a1.im + a2.im;
++                    const __m256d dr = a1.re - a2.re, di = a1.im - a2.im;
++                    const __m256d hr = a0.re - sr * vh, hi = a0.im - si * vh;
++                    const __m256d gr = di * vns, gi = dr * vs;
++                    c4store(b0, C4d{a0.re + sr, a0.im + si});
++                    c4store(b1, c4mul(C4d{hr - gr, hi - gi}, c4loadC2(p1)));
++                    c4store(b2, c4mul(C4d{hr + gr, hi + gi}, c4loadC2(p2)));
++                    const C4d e0 = c4loadM<RIRI_IN ? 2 : 1>(b0 + 8);
++                    const C4d e1 = c4loadM<RIRI_IN ? 2 : 1>(b1 + 8);
++                    const C4d e2 = c4loadM<RIRI_IN ? 2 : 1>(b2 + 8);
++                    const __m256d sr2 = e1.re + e2.re, si2 = e1.im + e2.im;
++                    const __m256d dr2 = e1.re - e2.re, di2 = e1.im - e2.im;
++                    const __m256d hr2 = e0.re - sr2 * vh, hi2 = e0.im - si2 * vh;
++                    const __m256d gr2 = di2 * vns, gi2 = dr2 * vs;
++                    c4store(b0 + 8, C4d{e0.re + sr2, e0.im + si2});
++                    c4store(b1 + 8, c4mul(C4d{hr2 - gr2, hi2 - gi2}, c4loadC2(p1 + 8)));
++                    c4store(b2 + 8, c4mul(C4d{hr2 + gr2, hi2 + gi2}, c4loadC2(p2 + 8)));
++                }
++                if (c)
+                 {
+-                    HINT_PREFETCH(p1 + 16, 0, 1);
+-                    HINT_PREFETCH(p2 + 16, 0, 1);
+                     const C4d a0 = c4loadM<RIRI_IN ? 2 : 1>(b0);
+                     const C4d a1 = c4loadM<RIRI_IN ? 2 : 1>(b1);
+                     const C4d a2 = c4loadM<RIRI_IN ? 2 : 1>(b2);
+@@ -2193,10 +2255,33 @@
+                 auto p2 = reinterpret_cast<const double *>(__builtin_assume_aligned(t2.getBegin(m), 32));
+                 double *b0 = reinterpret_cast<double *>(__builtin_assume_aligned(inout, 32));
+                 double *b1 = b0 + m * 2, *b2 = b0 + m * 4;
+-                for (size_t c = m / 4; c > 0; c--, b0 += 8, b1 += 8, b2 += 8, p1 += 8, p2 += 8)
++                // P0-c: 2x 展开 (b0+=16 每组处理 2 个蝶形)
++                size_t c = m / 4;
++                for (; c >= 2; c -= 2, b0 += 16, b1 += 16, b2 += 16, p1 += 16, p2 += 16)
++                {
++                    const C4d t0 = c4load(b0);
++                    const C4d x1 = c4mulConj(c4load(b1), c4loadC2(p1));
++                    const C4d x2 = c4mulConj(c4load(b2), c4loadC2(p2));
++                    const __m256d sr = x1.re + x2.re, si = x1.im + x2.im;
++                    const __m256d dr = x1.re - x2.re, di = x1.im - x2.im;
++                    const __m256d hr = t0.re - sr * vh, hi = t0.im - si * vh;
++                    const __m256d gr = di * vns, gi = dr * vs;
++                    c4storeM<RIRI_OUT ? 2 : 1>(b0, C4d{t0.re + sr, t0.im + si});
++                    c4storeM<RIRI_OUT ? 2 : 1>(b1, C4d{hr + gr, hi + gi});
++                    c4storeM<RIRI_OUT ? 2 : 1>(b2, C4d{hr - gr, hi - gi});
++                    const C4d u0 = c4load(b0 + 8);
++                    const C4d y1 = c4mulConj(c4load(b1 + 8), c4loadC2(p1 + 8));
++                    const C4d y2 = c4mulConj(c4load(b2 + 8), c4loadC2(p2 + 8));
++                    const __m256d sr2 = y1.re + y2.re, si2 = y1.im + y2.im;
++                    const __m256d dr2 = y1.re - y2.re, di2 = y1.im - y2.im;
++                    const __m256d hr2 = u0.re - sr2 * vh, hi2 = u0.im - si2 * vh;
++                    const __m256d gr2 = di2 * vns, gi2 = dr2 * vs;
++                    c4storeM<RIRI_OUT ? 2 : 1>(b0 + 8, C4d{u0.re + sr2, u0.im + si2});
++                    c4storeM<RIRI_OUT ? 2 : 1>(b1 + 8, C4d{hr2 + gr2, hi2 + gi2});
++                    c4storeM<RIRI_OUT ? 2 : 1>(b2 + 8, C4d{hr2 - gr2, hi2 - gi2});
++                }
++                if (c)
+                 {
+-                    HINT_PREFETCH(p1 + 16, 0, 1);
+-                    HINT_PREFETCH(p2 + 16, 0, 1);
+                     const C4d t0 = c4load(b0);
+                     const C4d x1 = c4mulConj(c4load(b1), c4loadC2(p1));
+                     const C4d x2 = c4mulConj(c4load(b2), c4loadC2(p2));

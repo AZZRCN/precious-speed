@@ -1,0 +1,35 @@
+# 优化版指令数 (callgrind, W1 tier 混合档, 确定性无噪声)
+# 机器: 192.168.1.66 Intel 285H VM (callgrind, 非 perf)
+# 二进制: g++ -O3 -std=c++17 -march=znver3 -mtune=znver3  hex_best/div.cpp -> div_opt_zn.bin
+# 对比 baseline_cg_66.txt (pow2 fm_prep): 4820.0M -> 4512.5M = -6.4% 总指令
+# 零行为变化: 全 25 组输出与 div.cpp 逐字节相同 (W1 仅改 FFT 档, 除法纠正循环收敛到同一精确商/余数)
+# 日期: 2026-08-14
+#
+# case            instr_M    cg_s
+length_ratio_0     421.39    1.18
+length_ratio_1     365.74    1.05
+length_ratio_2     391.72    1.17
+length_ratio_3     391.90    1.36
+length_ratio_4     366.35    1.28
+length_ratio_5     313.74    1.19
+amax_0               7.08    0.28
+amax_1             336.08    0.98
+amax_2             229.41    0.76
+max_0                7.08    0.29
+max_1                6.13    0.29
+max_2                7.08    0.28
+large_0            365.17    1.14
+large_1            324.19    1.06
+medium_0           227.10    0.72
+medium_1           227.96    0.73
+medium_2           229.02    0.72
+bzbound_0           14.89    0.34
+bzbound_1           14.47    0.34
+bzbound_2           14.58    0.33
+bzbound_3           14.42    0.34
+small_0            232.65    0.73
+power_0              4.31    0.27
+#
+# 胜点: length_ratio_2 470.62->391.72 (0.832), _3 461.62->391.90 (0.849), _4 486.82->366.35 (0.753)
+# 未变: newton_divide 路径 (length_ratio_0=421.39, amax_1=336.08) 与 n 落在混合档边界未超配的组
+# 既有问题(非回归): medium_2 #8 R>=B (两版一致); rnear_0 SIGFPE 崩溃 (两版一致, 用例文件自身问题)
