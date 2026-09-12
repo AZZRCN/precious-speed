@@ -1,41 +1,40 @@
 // 喵喵喵~ https://space.bilibili.com/620657947
 /*
-Submission #393027
+Submission #392237
 ID	Date	Problem	Lang	User	Status	Time	Memory
-393027	2026/8/14 09:14:03	
+392237	2026/8/12 18:17:06	
 
 Division of Hex Big Integers
-	C++23	(Anonymous)	AC	39 ms	29.21 Mib
+	C++23	(Anonymous)	AC	47 ms	31.52 Mib
 Name	Status	Time	Memory
-example_00	AC	1 ms	2.79 Mib
-small_00	AC	11 ms	11.52 Mib
-medium_00	AC	7 ms	8.80 Mib
-medium_01	AC	3 ms	6.79 Mib
+example_00	AC	1 ms	4.78 Mib
+small_00	AC	9 ms	12.26 Mib
+medium_00	AC	7 ms	9.79 Mib
+medium_01	AC	2 ms	6.66 Mib
 medium_02	AC	2 ms	7.54 Mib
-large_00	AC	2 ms	7.80 Mib
-large_01	AC	2 ms	7.01 Mib
-max_00	AC	4 ms	10.51 Mib
-max_01	AC	3 ms	7.80 Mib
-max_02	AC	3 ms	9.80 Mib
-a_max_b_random_00	AC	21 ms	17.70 Mib
-a_max_b_random_01	AC	32 ms	29.21 Mib
-a_max_b_random_02	AC	34 ms	29.00 Mib
-power_00	AC	3 ms	6.75 Mib
-r_nearly_zero_00	AC	9 ms	7.29 Mib
-r_nearly_zero_01	AC	2 ms	6.79 Mib
-r_nearly_zero_02	AC	2 ms	7.29 Mib
-length_ratio_integer_00	AC	39 ms	23.04 Mib
-length_ratio_integer_01	AC	35 ms	21.77 Mib
-length_ratio_integer_02	AC	36 ms	23.55 Mib
-length_ratio_integer_03	AC	33 ms	24.01 Mib
-length_ratio_integer_04	AC	31 ms	22.54 Mib
-length_ratio_integer_05	AC	35 ms	23.54 Mib
-burnikel_ziegler_bound_00	AC	10 ms	9.76 Mib
-burnikel_ziegler_bound_01	AC	23 ms	20.51 Mib
-burnikel_ziegler_bound_02	AC	6 ms	9.01 Mib
-burnikel_ziegler_bound_03	AC	14 ms	19.21 Mib
+large_00	AC	2 ms	7.04 Mib
+large_01	AC	3 ms	8.54 Mib
+max_00	AC	3 ms	8.29 Mib
+max_01	AC	2 ms	6.29 Mib
+max_02	AC	3 ms	9.51 Mib
+a_max_b_random_00	AC	21 ms	17.51 Mib
+a_max_b_random_01	AC	33 ms	28.79 Mib
+a_max_b_random_02	AC	33 ms	31.52 Mib
+power_00	AC	3 ms	6.79 Mib
+r_nearly_zero_00	AC	10 ms	8.28 Mib
+r_nearly_zero_01	AC	2 ms	7.26 Mib
+r_nearly_zero_02	AC	2 ms	7.03 Mib
+length_ratio_integer_00	AC	47 ms	31.30 Mib
+length_ratio_integer_01	AC	39 ms	23.25 Mib
+length_ratio_integer_02	AC	45 ms	23.76 Mib
+length_ratio_integer_03	AC	42 ms	22.51 Mib
+length_ratio_integer_04	AC	39 ms	24.04 Mib
+length_ratio_integer_05	AC	27 ms	24.05 Mib
+burnikel_ziegler_bound_00	AC	11 ms	10.76 Mib
+burnikel_ziegler_bound_01	AC	18 ms	20.76 Mib
+burnikel_ziegler_bound_02	AC	6 ms	9.29 Mib
+burnikel_ziegler_bound_03	AC	16 ms	20.96 Mib
 */
-
 // AZZRCN
 // https://github.com/AZZRCN
 // HEX division v11 (v10 + MADV_HUGEPAGE 巨页)  (A>=0, B>0, floor 除法, 输出 "q r")
@@ -77,7 +76,7 @@ using u128 = __uint128_t;
 static constexpr int PAD = 128;
 static constexpr int INCAP = 9 << 20;
 static constexpr int OUTCAP = 10 << 20;
-static constexpr int MAXC = 110000;          // 1.76M hex / 16; bumped 2026-08-14 to cover DEC 2e6-digit max (1.66M hex -> 103811 limbs) so same-integer calibration can feed DEC GEN's full range into HEX best without buffer overflow
+static constexpr int MAXC = 100010;          // 1.6M hex / 16
 #ifndef BZ_CUTOFF
 #define BZ_CUTOFF 64                         // BZ 叶子规模 (limbs)
 #endif
@@ -85,7 +84,7 @@ static constexpr int MAXC = 110000;          // 1.76M hex / 16; bumped 2026-08-1
 #define BZ_MIN (BZ_CUTOFF * 2 + 32)          // 低于此规模直接 Knuth D
 #endif
 #ifndef KD_QMAX
-#define KD_QMAX 128                          // 商 limb 数 <= 此值时 Knuth D 完胜 BZ (285H callgrind: 128 比 64 省 ~1.5%)
+#define KD_QMAX 64                           // 商 limb 数 <= 此值时 Knuth D 完胜 BZ
 #endif
 #ifndef MULBF_MAX
 #define MULBF_MAX 48                         // mulg: nb <= 此值走学校法
@@ -191,10 +190,9 @@ static inline char* put_big(char* out, const u64* V, int n) {
 
 // ============================ AVX2 FFT ============================
 #ifndef FFT_LEAF_LOG
-// HEX 道 amax_1 (perf instructions:u, 2026-08-14) 扫描 LEAF=6..12:
-// 333.8M/325.7M/320.8M(L8)/318.9M(L9)/320.7M/326.1M/328.9M -> L9 最优 (-0.58% vs L8).
-// (旧 285H 13 组结论 L8 最优已过时; amax_1 是 HEX LC 最重用例, 主导排名.)
-#define FFT_LEAF_LOG 9
+// 选 13: v11(hugify) 基础上扩扫 9..13, idle best-of-5 大用例全优于 10/11/12
+// (length_ratio_integer_00 48 vs 51/53/53; a_max_b_random 34~36 最优)。与 MUL 同取 13。
+#define FFT_LEAF_LOG 11
 #endif
 namespace fft {
 using cpx = __m128d;
@@ -1012,6 +1010,7 @@ static void mul_fft(const u64* a, int na, const u64* b, int nb, u64* c) {
     merge_b2(c, FB, u, k);
 }
 
+
 // c[0..na+nb) = a*b
 static void mulg(const u64* a, int na, const u64* b, int nb, u64* c) {
     if (na < nb) { const u64* t = a; a = b; b = t; int s = na; na = nb; nb = s; }
@@ -1044,7 +1043,7 @@ static void fm_prep(FixedFFT& F, double* G, const u64* b, int nb, int na) {
     if (F.lm > FMCAP) return;
     F.ts = F.lm >> 1;
     F.path = (F.lm % 3 == 0) ? 3 : ((F.lm % 5 == 0) ? 5 : 2);
-    // split_b2 完整写入 G[0..F.lm) (含尾部补零), 前置 memset 冗余 -> 删除省 ~memset 开销
+    std::memset(G, 0, (size_t)F.lm * 8);
     split_b2(b, G, nb, F.k, F.lm);
     if (F.path == 3) {
         const u32 m = F.ts / 3;
@@ -1065,7 +1064,7 @@ static void fm_prep(FixedFFT& F, double* G, const u64* b, int nb, int na) {
     F.ok = true;
 }
 static void fm_mul(const FixedFFT& F, double* G, const u64* a, int na, u64* c) {
-    // split_b2 完整初始化 FB[0..F.lm), 前置 memset 冗余 -> 删除 (块循环每乘必跑, 省显著)
+    std::memset(FB, 0, (size_t)F.lm * 8);
     split_b2(a, FB, na, F.k, F.lm);
     if (F.path == 3) {
         const u32 m = F.ts / 3;
@@ -1166,7 +1165,7 @@ static void cyc_prep(CycFFT& F, double* G, const u64* b, int nb, int n) {
 }
 // out[0..mc) = (a * b) mod (B^mc - 1)，b 的正变换已在 G 中
 static void cyc_mul_fixed(const CycFFT& F, double* G, const u64* a, int na, u64* out) {
-    // split_b2 完整初始化 FB[0..F.lm), 前置 memset 冗余 -> 删除 (块循环每乘必跑, 省显著)
+    std::memset(FB, 0, (size_t)F.lm * 8);
     split_b2(a, FB, na, F.k, F.lm);
     if (F.path == 3) {
         const u32 m = F.ts / 3;
@@ -1376,7 +1375,7 @@ static void invertappr(const u64* d, int n, u64* v) {
     const int l = n - h;
     u64* save = wp;
     u64* xh = wp; wp += h + 2;
-    invertappr(d + l, h, xh);             // xh ~ B^{2h}/d_hi - B^h  (下估)
+    invertappr(d + l, h, xh);                    // xh ~ B^{2h}/d_hi - B^h  (下估)
     {                                            // xh -= 4  (保证 E >= 0)
         u64 bw = 4;
         for (int i = 0; i < h && bw; ++i) { u64 cur = xh[i]; xh[i] = cur - bw; bw = (cur < bw); }
@@ -1716,7 +1715,6 @@ int main() {
 
         if (la <= 16 && lb <= 16) {
             u64 av = hexpart(a0 + la, la), bv = hexpart(b0 + lb, lb);
-            if (bv == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }
             u64 qq = av / bv, rr = av - qq * bv;
             out = put_u64(out, qq);
             *out++ = ' ';
@@ -1727,7 +1725,6 @@ int main() {
         if (la <= 32 && lb <= 16) {
             u128 av = ((u128)hexpart(a0 + la - 16, la - 16) << 64) | hexfull(a0 + la);
             u64 bv = hexpart(b0 + lb, lb);
-            if (bv == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }
             u128 qq = av / bv;
             u64 rr = (u64)(av - qq * bv);
             u64 qh = (u64)(qq >> 64), ql = (u64)qq;
@@ -1742,9 +1739,8 @@ int main() {
         int na = parse_limbs(a0, la, A);
         int nb = parse_limbs(b0, lb, B);
         while (na > 1 && A[na - 1] == 0) --na;
-        while (nb > 0 && B[nb - 1] == 0) --nb;
+        while (nb > 1 && B[nb - 1] == 0) --nb;
 
-        if (nb == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }  // 除数为 0: 防崩 (LC 不发此非法输入)
         if (na == 1 && A[0] == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }
         if (mag_cmp(A, na, B, nb) < 0) {
             *out++ = '0'; *out++ = ' ';

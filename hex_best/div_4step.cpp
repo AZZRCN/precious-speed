@@ -77,7 +77,7 @@ using u128 = __uint128_t;
 static constexpr int PAD = 128;
 static constexpr int INCAP = 9 << 20;
 static constexpr int OUTCAP = 10 << 20;
-static constexpr int MAXC = 110000;          // 1.76M hex / 16; bumped 2026-08-14 to cover DEC 2e6-digit max (1.66M hex -> 103811 limbs) so same-integer calibration can feed DEC GEN's full range into HEX best without buffer overflow
+static constexpr int MAXC = 100010;          // 1.6M hex / 16
 #ifndef BZ_CUTOFF
 #define BZ_CUTOFF 64                         // BZ 叶子规模 (limbs)
 #endif
@@ -191,10 +191,9 @@ static inline char* put_big(char* out, const u64* V, int n) {
 
 // ============================ AVX2 FFT ============================
 #ifndef FFT_LEAF_LOG
-// HEX 道 amax_1 (perf instructions:u, 2026-08-14) 扫描 LEAF=6..12:
-// 333.8M/325.7M/320.8M(L8)/318.9M(L9)/320.7M/326.1M/328.9M -> L9 最优 (-0.58% vs L8).
-// (旧 285H 13 组结论 L8 最优已过时; amax_1 是 HEX LC 最重用例, 主导排名.)
-#define FFT_LEAF_LOG 9
+// 285H (callgrind, 13 瓶颈组) 4..14 单调, LEAF=8 最优 (比旧默认 11 省 ~1.5%).
+// basecase DFT 成本 ∝ N*leaf, 叶越小基例越省; 递归开销在 LEAF=8 仍未主导.
+#define FFT_LEAF_LOG 8
 #endif
 namespace fft {
 using cpx = __m128d;
@@ -485,7 +484,18 @@ static void ditFlat(cpx* d, u32 n, u32 bb) {
         else bfInv(d, q, twg(base));
     }
 }
+// ---- 4-step FFT (N=r*r, r=2^(L/2), 偶 log; 输出位反序排列, 与 difRec 同) ----
+// N=r^2 的 1D DFT == r×r 2D DFT (对称分解无 twiddle). 两步 DIF + 转置 + 位反序映射.
+alignas(64) static __m128d FFT_TMP[1 << 19];   // <= 524288 复数, 4-step 转置缓冲
+static inline u32 bitrev_n(u32 x, int lg) {
+    u32 r = 0; for (int i = 0; i < lg; ++i) { r = (r << 1) | (x & 1); x >>= 1; } return r;
+}
+static void dif4Step(cpx* d, u32 n);
 static void difRec(cpx* d, u32 n, u32 bb) {
+    if (bb == 0 && (n & (n - 1)) == 0 && n >= (1u << 10)) {
+        const int L = 31 - __builtin_clz(n);
+        if ((L & 1) == 0) { dif4Step(d, n); return; }
+    }
     if (n <= (1u << FFT_LEAF_LOG)) { difFlat(d, n, bb); return; }
     const u32 q = n >> 2, b4 = bb << 2;
     if (bb == 0) bf2FwdOne(d, q, twg(1));
@@ -494,6 +504,47 @@ static void difRec(cpx* d, u32 n, u32 bb) {
     difRec(d + q, q, b4 | 1);
     difRec(d + 2 * q, q, b4 | 2);
     difRec(d + 3 * q, q, b4 | 3);
+}
+// 位反序置换 (in-place): 把位反序排列变自然序 (或反之, 对称)
+static inline void bitrevPermute(cpx* a, u32 n) {
+    for (u32 i = 1, j = 0; i < n; ++i) {
+        u32 bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { cpx t = a[i]; a[i] = a[j]; a[j] = t; }
+    }
+}
+// 子 DFT: 复用原 difRec/difFlat (向量化 radix-4 FMA, 精度=原 #1), 输出自然序.
+//   先 resize(r) 让全局 twiddle 表基于子尺寸 r, 子 DFT 完成后恢复 resize(n).
+//   r <= 512 < 1024, 不会递归触发 dif4Step (difRec 守卫 n>=1024), 安全.
+static void subDFT(cpx* a, u32 r) {
+    resize(r);
+    difRec(a, r, 0);      // 位反序输出
+    bitrevPermute(a, r);  // -> 自然序 (与 4-step 调度约定一致)
+}
+// 4-step 正向 DIF (N=r*r, r=2^(L/2)): 行/列用原 difRec(向量化 radix-4, 自然序输出 via bitrevPermute).
+//   1) 行 DFT (沿 j) -> A[k1,i] 在 d[i*r + k1] (自然序)
+//   2) 交叉 twiddle B[k1,i] = A[k1,i] * exp(-2pi i * i*k1 / N), 转置 -> FFT_TMP[k1*r + i]
+//   3) 列 DFT (沿 i) -> FFT_TMP[k1*r + k2] = X[k1,k2] (自然序)
+//   4) d[bitrev_L(k)] = FFT_TMP[k] = X[k]  (位反序写回, 与 difRec 同)
+static void dif4Step(cpx* d, u32 n) {
+    const int L = 31 - __builtin_clz(n), lr = L >> 1;
+    const u32 r = 1u << lr;
+    const double phase = 6.283185307179586476925286766559 / (double)n; // 2*pi/N
+    // 1. 行 DFT (自然序), twiddle 表切到 r
+    for (u32 i = 0; i < r; ++i) subDFT(d + (size_t)i * r, r);
+    // 2. 交叉 twiddle + 转置 (FFT_TMP[k1*r + i] = A[k1,i] * W_N^{i*k1})
+    for (u32 k1 = 0; k1 < r; ++k1)
+        for (u32 i = 0; i < r; ++i) {
+            const double ang = -phase * (double)i * (double)k1;
+            cpx w = _mm_set_pd(std::sin(ang), std::cos(ang)); // (im, re)
+            FFT_TMP[(size_t)k1 * r + i] = cmul(d[(size_t)i * r + k1], w);
+        }
+    // 3. 列 DFT (自然序)
+    for (u32 k1 = 0; k1 < r; ++k1) subDFT(FFT_TMP + (size_t)k1 * r, r);
+    // 4. 位反序写回: d[out] = X[bitrev_L(out)] = FFT_TMP[bitrev_L(out)]
+    for (u32 out = 0; out < n; ++out) d[out] = FFT_TMP[bitrev_n(out, L)];
+    resize(n); // 恢复全局 twiddle 表尺寸 (subDFT 内已切到 r)
 }
 // ---- shang ban (index >= n/2) quan ling shi de ding ceng radix-4 (bb == 0, w0=w1=1) ----
 // t2 = t3 = 0  =>  a0 = a2 = x0, a1 = a3 = x1

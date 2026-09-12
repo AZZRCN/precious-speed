@@ -77,7 +77,7 @@ using u128 = __uint128_t;
 static constexpr int PAD = 128;
 static constexpr int INCAP = 9 << 20;
 static constexpr int OUTCAP = 10 << 20;
-static constexpr int MAXC = 110000;          // 1.76M hex / 16; bumped 2026-08-14 to cover DEC 2e6-digit max (1.66M hex -> 103811 limbs) so same-integer calibration can feed DEC GEN's full range into HEX best without buffer overflow
+static constexpr int MAXC = 100010;          // 1.6M hex / 16
 #ifndef BZ_CUTOFF
 #define BZ_CUTOFF 64                         // BZ 叶子规模 (limbs)
 #endif
@@ -191,10 +191,9 @@ static inline char* put_big(char* out, const u64* V, int n) {
 
 // ============================ AVX2 FFT ============================
 #ifndef FFT_LEAF_LOG
-// HEX 道 amax_1 (perf instructions:u, 2026-08-14) 扫描 LEAF=6..12:
-// 333.8M/325.7M/320.8M(L8)/318.9M(L9)/320.7M/326.1M/328.9M -> L9 最优 (-0.58% vs L8).
-// (旧 285H 13 组结论 L8 最优已过时; amax_1 是 HEX LC 最重用例, 主导排名.)
-#define FFT_LEAF_LOG 9
+// 285H (callgrind, 13 瓶颈组) 4..14 单调, LEAF=8 最优 (比旧默认 11 省 ~1.5%).
+// basecase DFT 成本 ∝ N*leaf, 叶越小基例越省; 递归开销在 LEAF=8 仍未主导.
+#define FFT_LEAF_LOG 8
 #endif
 namespace fft {
 using cpx = __m128d;
@@ -1044,7 +1043,7 @@ static void fm_prep(FixedFFT& F, double* G, const u64* b, int nb, int na) {
     if (F.lm > FMCAP) return;
     F.ts = F.lm >> 1;
     F.path = (F.lm % 3 == 0) ? 3 : ((F.lm % 5 == 0) ? 5 : 2);
-    // split_b2 完整写入 G[0..F.lm) (含尾部补零), 前置 memset 冗余 -> 删除省 ~memset 开销
+    // split_b2 完整写入 G[0..F.lm) (含尾部补零), 前置 memset 冗余 -> 删除
     split_b2(b, G, nb, F.k, F.lm);
     if (F.path == 3) {
         const u32 m = F.ts / 3;
@@ -1094,6 +1093,35 @@ static void fm_mul(const FixedFFT& F, double* G, const u64* a, int na, u64* c) {
         fft::ditRec((fft::cpx*)FB, F.ts, 0);
     }
     merge_b2(c, FB, F.u, F.k);
+}
+
+// 截断预计算: 与 fm_prep 同, 但 u = nb (输出 n limbs, 只取低 n 位) -> 半尺寸 FFT
+static void fm_prep_lo(FixedFFT& F, double* G, const u64* b, int nb) {
+    F.ok = false;
+    if (nb <= MULBF_MAX) return;
+    F.u = (size_t)nb;                 // 截断: 输出 n limbs
+    F.k = pick_k(F.u);
+    if (g_fmt) F.lm = fft_len_for(F.u, F.k);
+    else { const u32 coeffs = (u32)(F.u * 64 / F.k) + 1; F.lm = 2u << (31 - __builtin_clz(coeffs)); }
+    if (F.lm > FMCAP) return;
+    F.ts = F.lm >> 1;
+    F.path = (F.lm % 3 == 0) ? 3 : ((F.lm % 5 == 0) ? 5 : 2);
+    // split_b2 完整写入 G[0..F.lm) (含尾部补零), 前置 memset 冗余 -> 删除
+    split_b2(b, G, nb, F.k, F.lm);
+    if (F.path == 3) {
+        const u32 m = F.ts / 3;
+        fft::resize(m); fft::dif3StageR((fft::cpx*)G, m);
+        fft::difRec((fft::cpx*)G,                 m, 0);
+        fft::difRec((fft::cpx*)(G + 2 * (size_t)m), m, 0);
+        fft::difRec((fft::cpx*)(G + 4 * (size_t)m), m, 0);
+    } else if (F.path == 5) {
+        const u32 m = F.ts / 5;
+        fft::resize(m); fft::dif5StageR((fft::cpx*)G, m);
+        for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(G + 2 * (size_t)m * i), m, 0);
+    } else {
+        fft::resize(F.ts); fft::difRec((fft::cpx*)G, F.ts, 0);
+    }
+    F.ok = true;
 }
 
 // ============================ 环形固定乘数 (mod B^mc - 1) ============================
@@ -1761,11 +1789,11 @@ int main() {
             continue;
         }
         // 商 limb 数 = na-nb+1。极短商时 Knuth D 只跑几轮 O(nb)，远快于 BZ 的 M(nb)logn
+        // 注: Hensel/Newton 倒数除法 (newton_divide) 已验证在部分尺寸下挂死 (非 2 幂 nb 触发
+        //     invertappr/mulg 的 POT 假设), 且渐近 ~2x BZ、只覆盖 na<=2nb 非瓶颈路径;
+        //     故统一走 bz_divide (对任意尺寸正确)。Hensel 提升已体现在 bz 的 invertappr 倒数中。
         if (nb < BZ_MIN || na - nb + 1 <= KD_QMAX) {
             knuthD(A, na, B, nb, Qout, Rout);
-        } else if (na <= 2 * nb) {
-            wp = WORK;
-            newton_divide(A, na, B, nb, Qout, Rout);
         } else {
             wp = WORK;
             bz_divide(A, na, B, nb, Qout, Rout);

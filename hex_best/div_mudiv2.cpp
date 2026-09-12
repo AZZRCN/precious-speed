@@ -1,41 +1,40 @@
 // 喵喵喵~ https://space.bilibili.com/620657947
 /*
-Submission #393027
+Submission #392237
 ID	Date	Problem	Lang	User	Status	Time	Memory
-393027	2026/8/14 09:14:03	
+392237	2026/8/12 18:17:06	
 
 Division of Hex Big Integers
-	C++23	(Anonymous)	AC	39 ms	29.21 Mib
+	C++23	(Anonymous)	AC	47 ms	31.52 Mib
 Name	Status	Time	Memory
-example_00	AC	1 ms	2.79 Mib
-small_00	AC	11 ms	11.52 Mib
-medium_00	AC	7 ms	8.80 Mib
-medium_01	AC	3 ms	6.79 Mib
+example_00	AC	1 ms	4.78 Mib
+small_00	AC	9 ms	12.26 Mib
+medium_00	AC	7 ms	9.79 Mib
+medium_01	AC	2 ms	6.66 Mib
 medium_02	AC	2 ms	7.54 Mib
-large_00	AC	2 ms	7.80 Mib
-large_01	AC	2 ms	7.01 Mib
-max_00	AC	4 ms	10.51 Mib
-max_01	AC	3 ms	7.80 Mib
-max_02	AC	3 ms	9.80 Mib
-a_max_b_random_00	AC	21 ms	17.70 Mib
-a_max_b_random_01	AC	32 ms	29.21 Mib
-a_max_b_random_02	AC	34 ms	29.00 Mib
-power_00	AC	3 ms	6.75 Mib
-r_nearly_zero_00	AC	9 ms	7.29 Mib
-r_nearly_zero_01	AC	2 ms	6.79 Mib
-r_nearly_zero_02	AC	2 ms	7.29 Mib
-length_ratio_integer_00	AC	39 ms	23.04 Mib
-length_ratio_integer_01	AC	35 ms	21.77 Mib
-length_ratio_integer_02	AC	36 ms	23.55 Mib
-length_ratio_integer_03	AC	33 ms	24.01 Mib
-length_ratio_integer_04	AC	31 ms	22.54 Mib
-length_ratio_integer_05	AC	35 ms	23.54 Mib
-burnikel_ziegler_bound_00	AC	10 ms	9.76 Mib
-burnikel_ziegler_bound_01	AC	23 ms	20.51 Mib
-burnikel_ziegler_bound_02	AC	6 ms	9.01 Mib
-burnikel_ziegler_bound_03	AC	14 ms	19.21 Mib
+large_00	AC	2 ms	7.04 Mib
+large_01	AC	3 ms	8.54 Mib
+max_00	AC	3 ms	8.29 Mib
+max_01	AC	2 ms	6.29 Mib
+max_02	AC	3 ms	9.51 Mib
+a_max_b_random_00	AC	21 ms	17.51 Mib
+a_max_b_random_01	AC	33 ms	28.79 Mib
+a_max_b_random_02	AC	33 ms	31.52 Mib
+power_00	AC	3 ms	6.79 Mib
+r_nearly_zero_00	AC	10 ms	8.28 Mib
+r_nearly_zero_01	AC	2 ms	7.26 Mib
+r_nearly_zero_02	AC	2 ms	7.03 Mib
+length_ratio_integer_00	AC	47 ms	31.30 Mib
+length_ratio_integer_01	AC	39 ms	23.25 Mib
+length_ratio_integer_02	AC	45 ms	23.76 Mib
+length_ratio_integer_03	AC	42 ms	22.51 Mib
+length_ratio_integer_04	AC	39 ms	24.04 Mib
+length_ratio_integer_05	AC	27 ms	24.05 Mib
+burnikel_ziegler_bound_00	AC	11 ms	10.76 Mib
+burnikel_ziegler_bound_01	AC	18 ms	20.76 Mib
+burnikel_ziegler_bound_02	AC	6 ms	9.29 Mib
+burnikel_ziegler_bound_03	AC	16 ms	20.96 Mib
 */
-
 // AZZRCN
 // https://github.com/AZZRCN
 // HEX division v11 (v10 + MADV_HUGEPAGE 巨页)  (A>=0, B>0, floor 除法, 输出 "q r")
@@ -52,12 +51,12 @@ burnikel_ziegler_bound_03	AC	14 ms	19.21 Mib
 
 #include <cstdint>
 #include <cstring>
+#include <random>
 #include <cmath>
 #include <complex>
 #include <vector>
 #include <immintrin.h>
 #include <unistd.h>
-#include <cstdlib>
 #ifdef __linux__
 #include <sys/mman.h>
 #endif
@@ -77,7 +76,7 @@ using u128 = __uint128_t;
 static constexpr int PAD = 128;
 static constexpr int INCAP = 9 << 20;
 static constexpr int OUTCAP = 10 << 20;
-static constexpr int MAXC = 110000;          // 1.76M hex / 16; bumped 2026-08-14 to cover DEC 2e6-digit max (1.66M hex -> 103811 limbs) so same-integer calibration can feed DEC GEN's full range into HEX best without buffer overflow
+static constexpr int MAXC = 100010;          // 1.6M hex / 16
 #ifndef BZ_CUTOFF
 #define BZ_CUTOFF 64                         // BZ 叶子规模 (limbs)
 #endif
@@ -85,7 +84,7 @@ static constexpr int MAXC = 110000;          // 1.76M hex / 16; bumped 2026-08-1
 #define BZ_MIN (BZ_CUTOFF * 2 + 32)          // 低于此规模直接 Knuth D
 #endif
 #ifndef KD_QMAX
-#define KD_QMAX 128                          // 商 limb 数 <= 此值时 Knuth D 完胜 BZ (285H callgrind: 128 比 64 省 ~1.5%)
+#define KD_QMAX 64                           // 商 limb 数 <= 此值时 Knuth D 完胜 BZ
 #endif
 #ifndef MULBF_MAX
 #define MULBF_MAX 48                         // mulg: nb <= 此值走学校法
@@ -191,10 +190,9 @@ static inline char* put_big(char* out, const u64* V, int n) {
 
 // ============================ AVX2 FFT ============================
 #ifndef FFT_LEAF_LOG
-// HEX 道 amax_1 (perf instructions:u, 2026-08-14) 扫描 LEAF=6..12:
-// 333.8M/325.7M/320.8M(L8)/318.9M(L9)/320.7M/326.1M/328.9M -> L9 最优 (-0.58% vs L8).
-// (旧 285H 13 组结论 L8 最优已过时; amax_1 是 HEX LC 最重用例, 主导排名.)
-#define FFT_LEAF_LOG 9
+// 选 13: v11(hugify) 基础上扩扫 9..13, idle best-of-5 大用例全优于 10/11/12
+// (length_ratio_integer_00 48 vs 51/53/53; a_max_b_random 34~36 最优)。与 MUL 同取 13。
+#define FFT_LEAF_LOG 11
 #endif
 namespace fft {
 using cpx = __m128d;
@@ -923,6 +921,23 @@ static inline int pick_k(size_t u) {
     while (u > gk[i]) ++i;
     return 19 - i;
 }
+// cyc_mul 专用 k 选择: 需 k | 64m 且 total=64m/k 为合法 FFT 档(2^j/3*2^j/5*2^j)。
+// 这样 digit 空间环形卷积周期 (x^total-1) == (2^k)^total-1 == 2^{64m}-1 == B^m-1,
+// 且环形 FFT 长度 = total (HALF 尺寸)。选最大满足的 k (digit 少=FFT 小)。
+// 返回 0 表示无合法档 (调用方退回线性 mulg+wrap, 仍正确但无半尺寸收益)。
+static inline int pick_k_cyclic(int m) {
+    const size_t bitlen = (size_t)m * 64;
+    for (int k = 19; k >= 8; --k) {
+        if (bitlen % (size_t)k != 0) continue;
+        const size_t total = bitlen / (size_t)k;
+        if (total < 32) continue;                                  // FFT 档下限
+        const u32 lm = fft_ceil_tiers((u32)total);
+        if (lm != (u32)total) continue;                            // total 必须是合法档(否则环形周期≠total)
+        if (((size_t)1 << (2 * k)) > ((size_t)1 << 48) / lm) continue;  // 精度预算 2^(2k)*lm<=2^48
+        return k;
+    }
+    return 0;
+}
 
 // ============================ multiply ============================
 static void mul_bf(const u64* a, int na, const u64* b, int nb, u64* c) {
@@ -1012,6 +1027,7 @@ static void mul_fft(const u64* a, int na, const u64* b, int nb, u64* c) {
     merge_b2(c, FB, u, k);
 }
 
+
 // c[0..na+nb) = a*b
 static void mulg(const u64* a, int na, const u64* b, int nb, u64* c) {
     if (na < nb) { const u64* t = a; a = b; b = t; int s = na; na = nb; nb = s; }
@@ -1021,190 +1037,230 @@ static void mulg(const u64* a, int na, const u64* b, int nb, u64* c) {
 
 // ---- 固定乘数的 FFT 复用: Barrett 块循环里 q2 / BS 恒定, 正变换只做一次 ----
 static constexpr u32 FMCAP = 1u << 20;
-// v17: lm 由「纯 2 幂 next_pow2(coeffs)」改为 fft_ceil_tiers (2^j / 3*2^(j-2) / 5*2^(j-3))。
-//   旧实现在 coeffs 略过 2 幂时白付 2x 长度 —— 例如 n=16896: coeffs=144226 -> 旧 262144, 新 163840,
-//   此时 fm_mul(2 次 131072 点变换 = 262144) 竟比普通 mulg(3 次 81920 = 245760) 还慢, 属净亏。
-//   混合档恒 <= next_pow2, 精度预算 2^(2k)*lm <= 2^48 天然不破。
-struct FixedFFT { size_t u; u32 lm, ts; int k, path; bool ok; };
+struct FixedFFT { size_t u; u32 lm, ts; int k; bool ok; };
 alignas(HP) static double FMG1[FMCAP], FMG2[FMCAP];
 static FixedFFT FF1, FF2;
-static bool g_fmt = true;                  // FMT=0 -> 退回旧的纯 2 幂 (A/B 归因用)
 
 static void fm_prep(FixedFFT& F, double* G, const u64* b, int nb, int na) {
     F.ok = false;
     if (nb <= MULBF_MAX) return;
     F.u = (size_t)na + nb;
     F.k = pick_k(F.u);
-    if (g_fmt) {
-        F.lm = fft_len_for(F.u, F.k);
-    } else {
-        const u32 coeffs = (u32)(F.u * 64 / F.k) + 1;
-        F.lm = 2u << (31 - __builtin_clz(coeffs));
-    }
+    const u32 coeffs = (u32)(F.u * 64 / F.k) + 1;
+    F.lm = 2u << (31 - __builtin_clz(coeffs));
     if (F.lm > FMCAP) return;
     F.ts = F.lm >> 1;
-    F.path = (F.lm % 3 == 0) ? 3 : ((F.lm % 5 == 0) ? 5 : 2);
-    // split_b2 完整写入 G[0..F.lm) (含尾部补零), 前置 memset 冗余 -> 删除省 ~memset 开销
+    std::memset(G, 0, (size_t)F.lm * 8);
     split_b2(b, G, nb, F.k, F.lm);
-    if (F.path == 3) {
-        const u32 m = F.ts / 3;
-        fft::resize(m);
-        fft::dif3StageR((fft::cpx*)G, m);
-        fft::difRec((fft::cpx*)G,                 m, 0);
-        fft::difRec((fft::cpx*)(G + 2*(size_t)m), m, 0);
-        fft::difRec((fft::cpx*)(G + 4*(size_t)m), m, 0);
-    } else if (F.path == 5) {
-        const u32 m = F.ts / 5;
-        fft::resize(m);
-        fft::dif5StageR((fft::cpx*)G, m);
-        for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(G + 2*(size_t)m*i), m, 0);
-    } else {
-        fft::resize(F.ts);
-        fft::difRec((fft::cpx*)G, F.ts, 0);
-    }
+    fft::resize(F.ts);
+    fft::difRec((fft::cpx*)G, F.ts, 0);
     F.ok = true;
 }
 static void fm_mul(const FixedFFT& F, double* G, const u64* a, int na, u64* c) {
-    // split_b2 完整初始化 FB[0..F.lm), 前置 memset 冗余 -> 删除 (块循环每乘必跑, 省显著)
+    std::memset(FB, 0, (size_t)F.lm * 8);
     split_b2(a, FB, na, F.k, F.lm);
-    if (F.path == 3) {
-        const u32 m = F.ts / 3;
-        fft::resize(m);
-        fft::dif3StageR((fft::cpx*)FB, m);
-        fft::difRec((fft::cpx*)FB,                 m, 0);
-        fft::difRec((fft::cpx*)(FB + 2*(size_t)m), m, 0);
-        fft::difRec((fft::cpx*)(FB + 4*(size_t)m), m, 0);
-        fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)G, m, 3);
-        fft::ditRec((fft::cpx*)FB,                 m, 0);
-        fft::ditRec((fft::cpx*)(FB + 2*(size_t)m), m, 0);
-        fft::ditRec((fft::cpx*)(FB + 4*(size_t)m), m, 0);
-        fft::idit3StageR((fft::cpx*)FB, m);
-    } else if (F.path == 5) {
-        const u32 m = F.ts / 5;
-        fft::resize(m);
-        fft::dif5StageR((fft::cpx*)FB, m);
-        for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(FB + 2*(size_t)m*i), m, 0);
-        fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)G, m, 5);
-        for (int i = 0; i < 5; ++i) fft::ditRec((fft::cpx*)(FB + 2*(size_t)m*i), m, 0);
-        fft::idit5StageR((fft::cpx*)FB, m);
-    } else {
-        fft::resize(F.ts);
-        fft::difRec((fft::cpx*)FB, F.ts, 0);
-        fft::pointwise((fft::cpx*)FB, (fft::cpx*)G, F.ts);
-        fft::ditRec((fft::cpx*)FB, F.ts, 0);
-    }
+    fft::resize(F.ts);
+    fft::difRec((fft::cpx*)FB, F.ts, 0);
+    fft::pointwise((fft::cpx*)FB, (fft::cpx*)G, F.ts);
+    fft::ditRec((fft::cpx*)FB, F.ts, 0);
     merge_b2(c, FB, F.u, F.k);
 }
 
-// ============================ 环形固定乘数 (mod B^mc - 1) ============================
-// Barrett 块循环第二个乘法 P = qhat*BS 之后立刻做 Z -= P, 且 R = Z-P < 8*B^n。
-// 故只需 P mod (B^mc-1) (mc >= n+2) 即可唯一定出 R —— 环形卷积长度 = 64*mc/k, 约为线性
-// 长度 128n/k 的一半 (HALF 尺寸), 这是 DEC 相对 HEX 的核心算法杠杆。
-//   正确性: R = Z - P ≡ (Zlo + Zhi) - cyc  (mod B^mc-1), 且 0 <= R < B^(n+1) <= B^(mc-1) < B^mc-1
-//           => mc-limb 环内的代表元唯一 (仅 R==0 时可能取到 all-ones, 由 out[mc-1]!=0 判别)。
-//   精度: 环形卷积输出系数 = 至多 d = ceil(64n/k) 项 digit 积之和 (操作数只有 n limb 非零),
-//         判据 d*2^(2k) <= 2^47, 与已验证线性路径 (lm/2)*2^(2k) <= 2^47 同安全级。
-struct CycFFT { u32 lm, ts; int k, path, mc; bool ok; };
-static CycFFT CY2;
-static bool g_cyc = true;                  // CYC=0 -> 退回线性 fm_mul
-
-// 选 (L, k, mc): L 为最小合法 FFT 档, k | 64mc, mc = L*k/64 >= n+2, 精度 d*2^(2k) <= 2^47
-static bool pick_cyclic(int n, u32& Lo, int& ko, int& mco) {
-    const int nmin = n + 2;
-    for (int j = 5; j < 25; ++j) {
-        const u32 p = 1u << j;
-        u32 cand[3] = { p, (p % 4 == 0) ? (p / 4 * 3) : 0, (p % 8 == 0) ? (p / 8 * 5) : 0 };
-        // 同一 octave 内按 1.0 / 1.25 / 1.5 升序: p, 5p/8... 注意 p 自身最小, 其余属更高 octave 的细分档
-        // 这里逐 octave 只需检查 p 与上一 octave 细分出的 3p/4, 5p/8 —— 统一排序后取首个可行
-        u32 srt[3];
-        int ns = 0;
-        for (int i = 0; i < 3; ++i) if (cand[i] >= 32) srt[ns++] = cand[i];
-        for (int i = 1; i < ns; ++i) for (int t = i; t > 0 && srt[t] < srt[t-1]; --t) { u32 s = srt[t]; srt[t] = srt[t-1]; srt[t-1] = s; }
-        for (int i = 0; i < ns; ++i) {
-            const u32 L = srt[i];
-            for (int k = 19; k >= 8; --k) {
-                if (((size_t)L * k) % 64) continue;
-                const int mc = (int)((size_t)L * k / 64);
-                if (mc < nmin) continue;
-                const size_t d = ((size_t)64 * n + k - 1) / k;         // 单操作数非零 digit 数
-                if (d > ((size_t)1 << 47) >> (2 * k)) continue;        // d*2^(2k) <= 2^47
-                Lo = L; ko = k; mco = mc; return true;
-            }
-        }
+// ============================ cyclic 卷积 (mod B^m - 1) ============================
+// (前向声明: cmpn / invertappr 在本文件更靠后定义)
+static inline int cmpn(const u64* a, const u64* b, int n);
+static void invertappr(const u64* d, int n, u64* v);
+// cyc_mul(a,b,m,out): out = (a*b) mod (B^m - 1), B = 2^64。a,b,out 各 m limbs。
+// HEX 的 FFT 工作在 k 位 digit 空间 (limb 2^64 溢出 double), 故不能直接像 DEC 那样在 limb 空间做 FFT。
+// 正确性前提: 选 k | 64m 且 total=64m/k 为合法 FFT 档 -> digit 空间环形卷积周期 (x^total-1)
+//   即 (2^k)^total-1 = 2^{64m}-1 = B^m-1。环形 FFT 长度 = total (HALF 尺寸), 直接得 cyclic 积。
+static void cyc_mul(const u64* a, const u64* b, int m, u64* out) {
+    if (m <= 0) { if (m > 0) std::memset(out, 0, (size_t)m * 8); return; }
+    const int k = pick_k_cyclic(m);
+    if (k == 0) {                                       // 无合法档: 退回线性 mulg + B^m 回绕 (正确, 无半尺寸收益)
+        static u64 tmp2[9000];
+        mulg(a, m, b, m, tmp2);
+        u128 c = 0;
+        for (int i = 0; i < m; ++i) { c += (u128)tmp2[i]; out[i] = (u64)c; c >>= 64; }
+        for (int i = 0; i < m; ++i) { c += (u128)tmp2[i + m]; u128 s = (u128)out[i] + (u64)c; out[i] = (u64)s; c = s >> 64; }
+        if (c) { u128 s = (u64)out[0] + c; out[0] = (u64)s; }
+        return;
     }
-    return false;
-}
-
-static void cyc_prep(CycFFT& F, double* G, const u64* b, int nb, int n) {
-    F.ok = false;
-    if (nb <= MULBF_MAX) return;
-    u32 L; int k, mc;
-    if (!pick_cyclic(n, L, k, mc)) return;
-    if (L > FMCAP) return;
-    F.lm = L; F.ts = L >> 1; F.k = k; F.mc = mc;
-    F.path = (L % 3 == 0) ? 3 : ((L % 5 == 0) ? 5 : 2);
-    if (F.ts / (F.path == 3 ? 3u : (F.path == 5 ? 5u : 1u)) < 16) return;   // pointwise_blk 护栏
-    std::memset(G, 0, (size_t)L * 8);
-    split_b2(b, G, nb, k, L);
-    if (F.path == 3) {
-        const u32 m = F.ts / 3;
-        fft::resize(m);
-        fft::dif3StageR((fft::cpx*)G, m);
-        fft::difRec((fft::cpx*)G,                 m, 0);
-        fft::difRec((fft::cpx*)(G + 2*(size_t)m), m, 0);
-        fft::difRec((fft::cpx*)(G + 4*(size_t)m), m, 0);
-    } else if (F.path == 5) {
-        const u32 m = F.ts / 5;
-        fft::resize(m);
-        fft::dif5StageR((fft::cpx*)G, m);
-        for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(G + 2*(size_t)m*i), m, 0);
+    const size_t total = (size_t)m * 64 / (size_t)k;    // 精确整除 (k | 64m)
+    const u32 lm = fft_ceil_tiers((u32)total);          // == total (已保证是合法档)
+    const u32 ts = lm >> 1;
+    std::memset(FB, 0, (size_t)lm * 8);
+    std::memset(GB, 0, (size_t)lm * 8);
+    split_b2(a, FB, m, k, lm);
+    split_b2(b, GB, m, k, lm);
+    fft::resize(ts);
+    const int path = (lm % 3 == 0) ? 3 : ((lm % 5 == 0) ? 5 : 2);
+    if (path == 3) {
+        const u32 mm = ts / 3;
+        fft::resize(mm);
+        fft::dif3StageR((fft::cpx*)FB, mm); fft::difRec((fft::cpx*)FB, mm, 0); fft::difRec((fft::cpx*)(FB + 2 * (size_t)mm), mm, 0); fft::difRec((fft::cpx*)(FB + 4 * (size_t)mm), mm, 0);
+        fft::dif3StageR((fft::cpx*)GB, mm); fft::difRec((fft::cpx*)GB, mm, 0); fft::difRec((fft::cpx*)(GB + 2 * (size_t)mm), mm, 0); fft::difRec((fft::cpx*)(GB + 4 * (size_t)mm), mm, 0);
+        fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)GB, mm, 3);
+        fft::ditRec((fft::cpx*)FB, mm, 0); fft::ditRec((fft::cpx*)(FB + 2 * (size_t)mm), mm, 0); fft::ditRec((fft::cpx*)(FB + 4 * (size_t)mm), mm, 0);
+        fft::idit3StageR((fft::cpx*)FB, mm);
+    } else if (path == 5) {
+        const u32 mm = ts / 5;
+        fft::resize(mm);
+        fft::dif5StageR((fft::cpx*)FB, mm); for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(FB + 2 * (size_t)mm * i), mm, 0);
+        fft::dif5StageR((fft::cpx*)GB, mm); for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(GB + 2 * (size_t)mm * i), mm, 0);
+        fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)GB, mm, 5);
+        for (int i = 0; i < 5; ++i) fft::ditRec((fft::cpx*)(FB + 2 * (size_t)mm * i), mm, 0);
+        fft::idit5StageR((fft::cpx*)FB, mm);
     } else {
-        fft::resize(F.ts);
-        fft::difRec((fft::cpx*)G, F.ts, 0);
+        fft::resize(ts);
+        fft::difRec((fft::cpx*)FB, ts, 0);
+        fft::difRec((fft::cpx*)GB, ts, 0);
+        fft::pointwise((fft::cpx*)FB, (fft::cpx*)GB, ts);
+        fft::ditRec((fft::cpx*)FB, ts, 0);
     }
-    F.ok = true;
-}
-// out[0..mc) = (a * b) mod (B^mc - 1)，b 的正变换已在 G 中
-static void cyc_mul_fixed(const CycFFT& F, double* G, const u64* a, int na, u64* out) {
-    // split_b2 完整初始化 FB[0..F.lm), 前置 memset 冗余 -> 删除 (块循环每乘必跑, 省显著)
-    split_b2(a, FB, na, F.k, F.lm);
-    if (F.path == 3) {
-        const u32 m = F.ts / 3;
-        fft::resize(m);
-        fft::dif3StageR((fft::cpx*)FB, m);
-        fft::difRec((fft::cpx*)FB,                 m, 0);
-        fft::difRec((fft::cpx*)(FB + 2*(size_t)m), m, 0);
-        fft::difRec((fft::cpx*)(FB + 4*(size_t)m), m, 0);
-        fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)G, m, 3);
-        fft::ditRec((fft::cpx*)FB,                 m, 0);
-        fft::ditRec((fft::cpx*)(FB + 2*(size_t)m), m, 0);
-        fft::ditRec((fft::cpx*)(FB + 4*(size_t)m), m, 0);
-        fft::idit3StageR((fft::cpx*)FB, m);
-    } else if (F.path == 5) {
-        const u32 m = F.ts / 5;
-        fft::resize(m);
-        fft::dif5StageR((fft::cpx*)FB, m);
-        for (int i = 0; i < 5; ++i) fft::difRec((fft::cpx*)(FB + 2*(size_t)m*i), m, 0);
-        fft::pointwise_mixed((fft::cpx*)FB, (fft::cpx*)G, m, 5);
-        for (int i = 0; i < 5; ++i) fft::ditRec((fft::cpx*)(FB + 2*(size_t)m*i), m, 0);
-        fft::idit5StageR((fft::cpx*)FB, m);
-    } else {
-        fft::resize(F.ts);
-        fft::difRec((fft::cpx*)FB, F.ts, 0);
-        fft::pointwise((fft::cpx*)FB, (fft::cpx*)G, F.ts);
-        fft::ditRec((fft::cpx*)FB, F.ts, 0);
-    }
-    // digit -> limb: 环形卷积长度 L = 64*mc/k, 周期 (2^k)^L - 1 = B^mc - 1, 进位留在数内
-    u128 tmp = 0; int w = 0; size_t jj = 0;
-    for (int limb = 0; limb < F.mc; ++limb) {
-        while (w < 64) { tmp += (u128)(u64)(FB[jj] + 0.5) << w; w += F.k; ++jj; }
+    // 环形卷积 (长度 lm=total) 已直接给出 mod (x^total-1) = mod (B^m-1); 仅需 digit->limb 还原 (进位在数内)。
+    u128 tmp = 0; int w = 0; size_t j = 0;
+    for (int limb = 0; limb < m; ++limb) {
+        while (w < 64) { tmp += (u128)(u64)(FB[j] + 0.5) << w; w += k; ++j; }
         out[limb] = (u64)tmp; tmp >>= 64; w -= 64;
     }
-    if (tmp) {                                   // B^mc ≡ 1 回绕
+    if (tmp) {                                       // 防御: 正常 < B^m, tmp=0; 否则按 B^m≡1 回绕
         u128 c = tmp;
-        for (int i = 0; i < F.mc; ++i) { u128 s = (u128)out[i] + c; out[i] = (u64)s; c = s >> 64; if (!c) break; }
+        for (int i = 0; i < m; ++i) { u128 s = (u128)out[i] + c; out[i] = (u64)s; c = s >> 64; if (!c) break; }
         if (c) { u128 s = (u128)out[0] + c; out[0] = (u64)s; }
     }
+}
+
+// ============================ mu-division (短逆 + 块循环) ============================
+// a(na)/d(nb) -> q(na-nb+1), r(nb)。a>=d>0, na>=nb。仅对 na >> nb (na > 2*nb) 调用。
+// 经典算法 (GMP divappr): 每块 in=nb/2 商 limb, 用短逆 ip=短 Newton 逆 (BS 顶 in+1 limb)
+// 估 qhat = floor(ahigh*ip / B^{in+1}), prod=qhat*BS 线性减, r-based 双向 +/-1 校正。
+// 正确性优先版: qhat/prod 均用线性 mulg (cyc_mul 半尺寸优化留待正确性证后)。
+static void mu_divide(const u64* a, int na, const u64* d, int nb, u64* q, u64* r) {
+    // 归一化: 左移 sigma 使 divisor 顶位 = 1 (bit 63 of d[nb-1])
+    const int sigma = (int)_lzcnt_u64(d[nb - 1]);
+    int in = nb / 2;
+    if (in < 1) in = 1;
+    u64* BS = wp; wp += (size_t)nb + 8;
+    std::memset(BS, 0, (size_t)nb * 8);
+    if (sigma) { u64 carry = 0; for (int i = 0; i < nb; ++i) { BS[i] = (d[i] << sigma) | carry; carry = d[i] >> (64 - sigma); } }
+    else std::memcpy(BS, d, (size_t)nb * 8);
+    // 短逆 ip = V = 2^(64*in) + v, 其中 v = invertappr(BS 顶 in limb, in) 满足
+    //   2^(64*in) + v <= 2^(128*in)/BS_top, 故 V ≈ B^{2*in}/BS_top ≈ B^{nb+in}/BS (B=2^64).
+    // 输出 in+1 limb: ip[0..in-1]=v, ip[in]=1 (即 2^(64*in) 项).
+    u64* ip = wp; wp += (size_t)in + 1 + 8;
+    invertappr(BS + (nb - in), in, ip);                  // 写 ip[0..in-1] = v
+    ip[in] = 1;                                          // 2^(64*in) 项
+    // 归一化被除数 Z = a << sigma (留足高位余量, 块减法向上借位不越界)
+    int nas = na + 4;
+    u64* Z = wp; wp += (size_t)nas + 8;
+    std::memset(Z, 0, (size_t)nas * 8);
+    if (sigma) { u64 carry = 0; for (int i = 0; i < na; ++i) { Z[i] = (a[i] << sigma) | carry; carry = a[i] >> (64 - sigma); } Z[na] = carry; }
+    else { std::memcpy(Z, a, (size_t)na * 8); }
+    // 归一化后 Z 有 na+1 个有效 limb (sigma>0 时 Z[na]=进位, 必须进入首块窗口).
+    // 故按 na+1 limb 视角取 qn = (na+1) - nb, 首块窗口顶 = qn+nb-1 = na. 商索引 [0, qn],
+    // 其中 q[qn] = q[na-nb+1] 可证恒为 0 (Q = A/B < B^{na-nb+1}), 在输出范围外, 直接不写.
+    int qn = na - nb + 1;
+    std::memset(q, 0, (size_t)(na - nb + 1) * 8);
+    // 工作缓冲
+    u64* ahigh = wp; wp += (size_t)in + 1 + 8;           // 估商高位 thi+1 limb
+    u64* qf = wp; wp += (size_t)(2 * in + 2) + 8;        // ahigh*ip 全积 (<= 2in+2 limb)
+    u64* qhat = wp; wp += (size_t)in + 1 + 8;            // 商块 thi+1 limb
+    u64* P = wp; wp += (size_t)(nb + in + 1) + 8;        // qhat*BS 全积 (<= nb+in+1 limb)
+    int qn_rem = qn;                                     // 剩余商 limb 数
+    while (qn_rem > 0) {
+        int thi = in; if (thi > qn_rem) thi = qn_rem;    // 本块商 limb 数
+        int wstart = qn_rem - thi;                        // 窗口底 (Z 下标)
+        int wtop = qn_rem + nb - 1;                       // 窗口顶 limb 下标
+        int wlen = nb + thi;                              // 窗口长度 (limb)
+        // ahigh = 窗口顶 thi+1 limb = Z[wtop-thi .. wtop]
+        int ahi0 = wtop - thi;
+        for (int i = 0; i <= thi; ++i) {
+            int idx = ahi0 + i;
+            ahigh[i] = (idx >= 0 && idx < nas) ? Z[idx] : 0;
+        }
+        // qhat_full = ahigh(thi+1) * V(in+1); qhat = 高 thi+1 limb = floor(qf / B^{64(in+1)})
+        mulg(ahigh, thi + 1, ip, in + 1, qf);
+        for (int i = 0; i <= thi; ++i) qhat[i] = qf[in + 1 + i];
+        // === MUDBG: 每块 dump W (subtraction 前窗口) + 首块细节 ===
+        if (std::getenv("MUDBG")) {
+            std::fprintf(stderr, "[BLK] wstart=%d thi=%d nb=%d in=%d\n", wstart, thi, nb, in);
+            std::fprintf(stderr, "[BLKW]");
+            for (int i = wlen - 1; i >= 0; --i) std::fprintf(stderr, "%016llx", (unsigned long long)Z[wstart + i]);
+            std::fprintf(stderr, "\n");
+            if (qn_rem == qn) {
+                std::fprintf(stderr, "[MUDBG] ip(%d limbs):", in + 1);
+                for (int i = in; i >= 0; --i) std::fprintf(stderr, "%016llx", (unsigned long long)ip[i]);
+                std::fprintf(stderr, "\n[MUDBG] ahigh(%d limbs):", thi + 1);
+                for (int i = thi; i >= 0; --i) std::fprintf(stderr, "%016llx", (unsigned long long)ahigh[i]);
+                std::fprintf(stderr, "\n[MUDBG] qhat_raw(%d limbs):", thi + 1);
+                for (int i = thi; i >= 0; --i) std::fprintf(stderr, "%016llx", (unsigned long long)qhat[i]);
+                std::fprintf(stderr, "\n[MUDBG] BS_top_limb=%016llx\n", (unsigned long long)BS[nb - 1]);
+            }
+        }
+        // P = qhat(thi+1) * BS(nb), 长度 plen = nb+thi+1
+        mulg(qhat, thi + 1, BS, nb, P);
+        int plen = nb + thi + 1;
+        // --- 修正1: product > window ? (qhat 偏大) ---
+        int corr1 = 0;
+        for (int guard = 0; guard < 16; ++guard) {
+            bool prod_gt = false;
+            if (plen > wlen && P[wlen] != 0) prod_gt = true;   // P 顶 limb 越界 -> 必 > window
+            if (!prod_gt) {
+                int cmp = cmpn(P, Z + wstart, wlen);
+                if (cmp <= 0) break;                          // product <= window, 收敛
+                prod_gt = true;
+            }
+            ++corr1;
+            // product -= BS (低 nb limb), 借位传播到 P[nb .. plen-1]
+            unsigned char b = 0;
+            for (int i = 0; i < nb; ++i) b = _subborrow_u64(b, P[i], BS[i], (unsigned long long*)&P[i]);
+            for (int i = nb; i < plen && b; ++i) { if (P[i]) { P[i]--; b = 0; } else P[i] = ~0ULL; }
+            unsigned char qc = 1; for (int i = 0; i <= thi; ++i) qc = _subborrow_u64(qc, qhat[i], 0, (unsigned long long*)&qhat[i]);  // qhat-- (借位入1=减1, 传播)
+        }
+        // --- 计算 new_rp = Z[wstart..] - P (完整 wlen limb), 写回 Z ---
+        unsigned char cy = 0;
+        for (int i = 0; i < wlen; ++i)
+            cy = _subborrow_u64(cy, Z[wstart + i], P[i], (unsigned long long*)&Z[wstart + i]);
+        // --- 修正2: new_rp >= BS ? (qhat 偏小) ---  高位非零即 >= B^nb > BS
+        int corr2 = 0;
+        for (int guard = 0; guard < 16; ++guard) {
+            bool rp_ge = false;
+            for (int i = nb; i < wlen; ++i) if (Z[wstart + i] != 0) { rp_ge = true; break; }
+            if (!rp_ge) { if (cmpn(Z + wstart, BS, nb) >= 0) rp_ge = true; }
+            if (!rp_ge) break;
+            ++corr2;
+            unsigned char b = 0;
+            for (int i = 0; i < nb; ++i) b = _subborrow_u64(b, Z[wstart + i], BS[i], (unsigned long long*)&Z[wstart + i]);
+            for (int i = nb; i < wlen && b; ++i) { if (Z[wstart + i]) { Z[wstart + i]--; b = 0; } else Z[wstart + i] = ~0ULL; }
+            unsigned char qc = 1; for (int i = 0; i <= thi; ++i) qc = _addcarry_u64(qc, qhat[i], 0, (unsigned long long*)&qhat[i]);  // qhat++ (进位入1=加1, 传播)
+        }
+        // === MUDBG: 每块后校正 dump (final qhat + 校正轮数) ===
+        if (std::getenv("MUDBG")) {
+            std::fprintf(stderr, "[BLKQ] corr1=%d corr2=%d qn_rem=%d\n", corr1, corr2, qn_rem);
+            for (int i = thi; i >= 0; --i) std::fprintf(stderr, "%016llx", (unsigned long long)qhat[i]);
+            std::fprintf(stderr, "\n");
+        }
+        // 存商块: 相邻块窗口在 limb qn_rem 处重叠 1 limb —— 该位已由上一块作为其底 limb
+        // (qhat_prev[0]) 写入且为终值; 而本块 qhat[thi] 恒为 0 (因上块余数 < BS*B^wstart
+        // => W < BS*B^thi => qhat < B^thi). 首块的 qhat[thi] 落在索引 qn=na-nb+1, 亦恒为 0.
+        // 故所有块都只写低 thi limb; 全部块并集正好铺满 [0, qn-1] = [0, na-nb].
+        for (int i = 0; i < thi; ++i) q[qn_rem - thi + i] = qhat[i];
+        // new_rp < BS -> 窗口高 thi limb 应为 0 (供下块窗口高位); 防御性清零
+        for (int i = wstart + nb; i < wstart + wlen && i < nas; ++i) Z[i] = 0;
+        qn_rem -= thi;
+    }
+    // r = Z[0..nb-1] >> sigma
+    if (sigma) {
+        for (int i = 0; i < nb; ++i) {
+            u64 lo = (i < nas) ? (Z[i] >> sigma) : 0;
+            u64 hi = (i + 1 < nas) ? (Z[i + 1] << (64 - sigma)) : 0;
+            r[i] = lo | hi;
+        }
+    } else {
+        for (int i = 0; i < nb; ++i) r[i] = (i < nas) ? Z[i] : 0;
+    }
+    wp = BS;
 }
 
 // ============================ 基本 limb 运算 ============================
@@ -1376,7 +1432,7 @@ static void invertappr(const u64* d, int n, u64* v) {
     const int l = n - h;
     u64* save = wp;
     u64* xh = wp; wp += h + 2;
-    invertappr(d + l, h, xh);             // xh ~ B^{2h}/d_hi - B^h  (下估)
+    invertappr(d + l, h, xh);                    // xh ~ B^{2h}/d_hi - B^h  (下估)
     {                                            // xh -= 4  (保证 E >= 0)
         u64 bw = 4;
         for (int i = 0; i < h && bw; ++i) { u64 cur = xh[i]; xh[i] = cur - bw; bw = (cur < bw); }
@@ -1675,7 +1731,44 @@ static void newton_divide(const u64* a, int na, const u64* d, int nb, u64* q, u6
     wp = save;
 }
 
+// ============================ cyc_mul 自测 (对拍线性参考) ============================
+static void cyc_selftest() {
+    std::mt19937_64 rng(12345);
+    const int ms[] = {32, 50, 64, 100, 128, 200, 256, 400, 512, 800};
+    // 确定性微例: a=b=全1 -> a*b = m^2 (单 limb)
+    for (int mi = 0; mi < 10; ++mi) {
+        int m = ms[mi];
+        u64* a = wp; wp += m + 8; u64* b = wp; wp += m + 8; u64* out = wp; wp += m + 8;
+        for (int i = 0; i < m; ++i) { a[i] = 1; b[i] = 1; }
+        cyc_mul(a, b, m, out);
+        std::fprintf(stderr, "[micro] m=%d out[0]=%llu (expect %llu) out[1]=%llu\n",
+                     m, (unsigned long long)out[0], (unsigned long long)(u64)((__uint128_t)m*m), (unsigned long long)out[1]);
+        wp = a;
+    }
+    for (int mi = 0; mi < 10; ++mi) {
+        int m = ms[mi];
+        int fails = 0;
+        for (int t = 0; t < 30; ++t) {
+            u64* a = wp; wp += m + 8; u64* b = wp; wp += m + 8;
+            u64* out = wp; wp += m + 8; u64* ref = wp; wp += 2 * m + 8; u64* ref2 = wp; wp += m + 8;
+            for (int i = 0; i < m; ++i) { a[i] = rng(); b[i] = rng(); }
+            cyc_mul(a, b, m, out);
+            mulg(a, m, b, m, ref);                       // 2m limbs
+            std::memset(ref2, 0, (size_t)m * 8);
+            u128 c = 0;
+            for (int i = 0; i < m; ++i) { c += (u128)ref[i]; ref2[i] = (u64)c; c >>= 64; }
+            for (int i = 0; i < m; ++i) { c += (u128)ref[i + m]; u128 s = (u128)ref2[i] + (u64)c; ref2[i] = (u64)s; c = s >> 64; }
+            if (c) { u128 s = (u128)ref2[0] + c; ref2[0] = (u64)s; u128 cc = s >> 64; for (int j = 1; j < m && cc; ++j) { u128 s2 = (u128)ref2[j] + cc; ref2[j] = (u64)s2; cc = s2 >> 64; } }
+            for (int i = 0; i < m; ++i) if (out[i] != ref2[i]) { ++fails; break; }
+            wp = a;
+        }
+        std::fprintf(stderr, "cyc_selftest m=%d: %s (%d fails/30)\n", m, fails ? "FAIL" : "OK", fails);
+    }
+}
+
 int main() {
+    if (std::getenv("CYCTEST")) { cyc_selftest(); return 0; }
+    const bool g_mu = std::getenv("MU") != nullptr;   // MU=1 -> na>>nb 走 mu_divide 实验
     // 巨页: 大缓冲全部对齐 2MiB 并显式申请, 消除 minor fault (参考 391969 的 17ms 路径)
     hugify(inbuf_, sizeof inbuf_);
     hugify(outbuf, sizeof outbuf);
@@ -1686,10 +1779,6 @@ int main() {
     hugify(WORK, sizeof WORK);
     hugify(FB, sizeof FB); hugify(GB, sizeof GB);
     hugify(FMG1, sizeof FMG1); hugify(FMG2, sizeof FMG2);
-    // 算法开关 (A/B 归因用): FMT=1 -> fm_mul 用混合档(默认); FMT=0 -> 退回旧纯 2 幂.
-    //                        CYC=1 -> bz_divide 第二处乘法用环形固定乘数(待接线); CYC=0 -> 线性 fm_mul.
-    { const char* e = getenv("FMT"); g_fmt = e ? (atoi(e) != 0) : true; }
-    { const char* e = getenv("CYC"); g_cyc = e ? (atoi(e) != 0) : true; }
     int len = 0;
     for (;;) {
         long r = read(0, inbuf + len, INCAP - len);
@@ -1716,7 +1805,6 @@ int main() {
 
         if (la <= 16 && lb <= 16) {
             u64 av = hexpart(a0 + la, la), bv = hexpart(b0 + lb, lb);
-            if (bv == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }
             u64 qq = av / bv, rr = av - qq * bv;
             out = put_u64(out, qq);
             *out++ = ' ';
@@ -1727,7 +1815,6 @@ int main() {
         if (la <= 32 && lb <= 16) {
             u128 av = ((u128)hexpart(a0 + la - 16, la - 16) << 64) | hexfull(a0 + la);
             u64 bv = hexpart(b0 + lb, lb);
-            if (bv == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }
             u128 qq = av / bv;
             u64 rr = (u64)(av - qq * bv);
             u64 qh = (u64)(qq >> 64), ql = (u64)qq;
@@ -1742,9 +1829,8 @@ int main() {
         int na = parse_limbs(a0, la, A);
         int nb = parse_limbs(b0, lb, B);
         while (na > 1 && A[na - 1] == 0) --na;
-        while (nb > 0 && B[nb - 1] == 0) --nb;
+        while (nb > 1 && B[nb - 1] == 0) --nb;
 
-        if (nb == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }  // 除数为 0: 防崩 (LC 不发此非法输入)
         if (na == 1 && A[0] == 0) { *out++ = '0'; *out++ = ' '; *out++ = '0'; *out++ = '\n'; continue; }
         if (mag_cmp(A, na, B, nb) < 0) {
             *out++ = '0'; *out++ = ' ';
@@ -1766,6 +1852,9 @@ int main() {
         } else if (na <= 2 * nb) {
             wp = WORK;
             newton_divide(A, na, B, nb, Qout, Rout);
+        } else if (g_mu) {
+            wp = WORK;
+            mu_divide(A, na, B, nb, Qout, Rout);
         } else {
             wp = WORK;
             bz_divide(A, na, B, nb, Qout, Rout);

@@ -62,3 +62,12 @@ temp/
 cases/
 cases_lf/
 bench_data/
+
+# 工作过程目录 / Local working-process dirs (不入库, 2026-09-13 结算)
+tools/
+reducer/
+_xfer/
+avx2_opt/
+vm_src_backup/
+=
+BEST_20260913_draft/
